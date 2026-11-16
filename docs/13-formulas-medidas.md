@@ -577,3 +577,47 @@ Hipótesis estructurales que quedan vivas, en orden de probabilidad:
 Lo que ya está descartado con números (no repetir): mezcla de keyforms (rotación y malla), pivote,
 ángulo negado, reflejos, escala en el origen, orden raíz→hoja, radix calculado a mano, índice
 invertido, recorte por dominio, y recalibrar los rectángulos.
+
+### 5.18 La especificación del formato resuelve la pregunta estructural (16 nov, cierre)
+
+Consultada la especificación **no oficial** del formato ([AyagamiDev/docs · `model/moc3_file_format.md`](https://github.com/AyagamiDev/docs/blob/main/model/moc3_file_format.md),
+reversa independiente), hay tres hechos que cambian el planteamiento:
+
+1. **El espacio de entrada del warp sí es `[0,1]²`**, «uniformly mapped to this grid, (0,0) arriba
+   izquierda y (1,1) abajo derecha». O sea: la hipótesis «cuadrado unidad» era la correcta por
+   especificación, y los rectángulos que la calibración sacó distintos de `[0,1]²` (`Warp1`:
+   0,569×0,798 en (0,214, 0,072)) **no son un dato del formato**: son el modelo compensando otra
+   cosa mal.
+2. **Hay DOS algoritmos de interpolación** por warp deformer, y no son equivalentes:
+   - **legacy**: la celda se parte en **dos triángulos** por la diagonal Y=X; con `x+y < 1` se usa
+     `A + x·(B−A) + y·(C−A)`, si no el triángulo `BDC`;
+   - **bilineal**: lerp estándar en el cuadrilátero.
+3. **Cuál se usa lo dice un flag del archivo**: `bilinear_interpolation: Bool32`, uno **por warp
+   deformer**, añadido en la versión 3.03 del formato (`WarpDeformer { … V3_3 { bilinear_interpolation } }`,
+   que la hexpat de OpenL2D llama *Quad Source*). Nuestro `.moc3` es versión 4.0.0, así que **tiene
+   ese campo**.
+
+Y hay un cuarto hecho, para la extrapolación: «si un vértice de entrada no está dentro de 0..1, se
+aplica un algoritmo de extrapolación más complejo», que expande el espacio de entrada a 5× (2
+unidades por lado) con el perímetro en un **paralelogramo** definido por los 4 vértices de esquina.
+
+**Nuestro parser no lee ese flag** (`crates/moc3/src/body.rs` no tiene ninguna sección de warp con
+tipo `Bool`), y el motor asume bilineal siempre. Esa es la explicación estructural que faltaba:
+
+- Si un warp usa **legacy** (el modo por defecto), la interpolación no es bilineal y un ajuste
+  bilineal **solo puede compensarlo torciendo el rectángulo** — exactamente lo que pasó con
+  `Warp1` y `Warp47..50`, y exactamente por lo que la ganancia frente al parámetro sale mal.
+- Como el error en reposo se puede clavar torciendo rectángulos, el ajuste parecía bueno y la
+  dinámica estaba rota (§5.16).
+
+### 5.19 El siguiente paso, ya sin interpretación
+
+1. Añadir la sección `warp_deformer.bilinear_interpolation` (Bool32, 1 por warp) al `LAYOUT` de
+   `crates/moc3/src/body.rs` **en su sitio** — las posiciones las da el SOT, así que se puede
+   localizar sin riesgo comparando los offsets con la sección de `cols`.
+2. Implementar las **dos** interpolaciones en `crates/pose` y elegir por el flag.
+3. Recalibrar desde cero con `[0,1]²` fijo y sin rectángulos libres: si la especificación está
+   bien, el reposo tiene que cuadrar sin tocar dominios.
+4. Validar con el **delta** entre poses, que es el juez que no se deja engañar.
+
+Nada de esto se ha probado todavía: es lo que hay que hacer, no lo que se hizo.
