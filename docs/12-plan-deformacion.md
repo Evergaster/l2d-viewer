@@ -4,6 +4,10 @@ Respuesta corta a «¿se puede escribir el algoritmo de deformación?»: **sí**
 todos en el archivo. Lo que no se puede es adivinarlo: hay dos cosas medidas hoy que invalidan la
 lectura ingenua, y este documento las deja escritas para no repetir el camino.
 
+> **Continuación:** el primer intento de implementar las fórmulas está en `docs/13-formulas-medidas.md`
+> (rotación y selección de keyform resueltas; el warp, sólo cuando su entrada no viene de una
+> rotación). El grafo y el layout del pool ya son código en `crates/pose`.
+
 ---
 
 ## 1. Lo que ya está leído y verificado (Hiyori.moc3)

@@ -1,0 +1,8 @@
+[package]
+name = "pose"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moc3 = { path = "../moc3" }
