@@ -658,3 +658,30 @@ que aún no se lee.
 
 Todo lo demás está medido y descartado con números en este documento. El siguiente que lo retome
 empieza por ahí, y ya sabe qué NO hace falta volver a probar: catorce hipótesis.
+
+### 5.22 El dato que ordena todo: cadena corta exacta, cadena larga imposible
+
+Con dominio `[0,1]²` fijo (sin rectángulos) y **búsqueda exhaustiva** de keyforms:
+
+| Malla | Eslabones | Error de la regla | Error de la **mejor** combinación |
+|---|---|---|---|
+| `ArtMesh104` | 3 (termina en warp) | — | **0,000005** |
+| `ArtMesh63` | 6 | 0,05110 | **0,046001** (¡no baja!) |
+| `ArtMesh131` | 6 | 0,04593 | **0,042329** (¡no baja!) |
+
+Esto es el dato más informativo de todo el día:
+
+- Una cadena de **3 eslabones** con dominio `[0,1]²` y **la regla de keyform sin tocar** da
+  `0,000005`. La fórmula de rotación, la del warp y la regla de selección **son correctas**.
+- Una cadena de **6 eslabones** no baja de 0,042 **ni probando todas las combinaciones de keyform**.
+  Si el problema fuera la selección, la búsqueda exhaustiva lo encontraría. No lo encuentra.
+
+Conclusión: **la composición de más de ~3 eslabones está mal**, y no por los keyforms. Lo más
+probable es lo que quedó abierto en §5.21: después de un warp, su salida está en el espacio del
+padre, y el siguiente deformador espera su entrada en el `[0,1]²` **suyo**. Esa conversión entre
+eslabones es la que falta.
+
+**Siguiente paso, ya sin ambigüedad:** para una cadena de 6, tomar los dos primeros eslabones y
+calcular, con el oráculo, qué conversión entre ambos reproduce el resultado; luego con los tres
+primeros, y así. Ahí se ve la regla de conversión en vez de suponerla. Es el mismo método que
+funcionó con el warp aislado (`tools/warp-aislado.py`), aplicado a la frontera entre eslabones.
