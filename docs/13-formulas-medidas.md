@@ -407,3 +407,37 @@ selección de keyform de algún eslabón de esas cadenas largas no cambia cuando
 
 Ese es el objetivo único que queda: una cadena de 6 eslabones que responde a `AngleZ`, con el delta
 como juez — que no arrastra el error de base.
+
+### 5.11 El caso concreto, con números: el modelo se mueve la mitad
+
+`ArtMesh63`, cadena `Warp37 → Rotation1 → Rotation2 → Warp → Warp0 → Warp1`. En reposo, la
+combinación `(4, 1, 1, 0, 1, 1)` reproduce el Core con error **6·10⁻⁶**: la cadena está bien montada.
+
+`Rotation2` es la que responde a `ParamAngleZ` (banda `[-10, 0, 10]`). Sus tres keyforms **no
+rotan**: ángulo 0 en las tres, misma `esc` = 1/2976 y mismo origen en y. Lo único que cambia es
+`origin_x`:
+
+| keyform | origin_x |
+|---|---|
+| 0 (−10) | 0,48671 |
+| 1 (0) | 0,49419 |
+| 2 (+10) | 0,50088 |
+
+Medido contra el oráculo de `AngleZ=10`:
+
+| Estado de Rotation2 | Error contra la pose a 10 |
+|---|---|
+| kf 0 | 0,02076 |
+| kf 1 (el de reposo) | 0,01328 |
+| **kf 2** | **0,00722** |
+| mezcla kf1→kf2 a 0,75 | 0,00826 |
+
+Con kf2 el error baja pero **no llega a cero**, y el barrido de ángulo (de −2° a +2°) no lo mejora
+(error mínimo 0,0046 a 1,99°). Dato que apunta a la explicación: el desplazamiento del oráculo es
+**0,0133** y el que produce el paso kf1→kf2 es **0,0067** — exactamente **la mitad**. El Core se
+mueve el doble de lo que explica un solo paso de keyform.
+
+Hipótesis viva y concreta para retomar: que para ese parámetro haya **dos** pasos acumulados
+(extrapolación más allá de la última clave, o bien el mismo valor aplicado al deformador y a la
+malla), o bien que el índice correcto sea 2 con extrapolación desde kf1 (0,4942 + 2·0,0067 = 0,5076).
+Las dos son medibles con el mismo montaje: el delta entre poses cancela todo lo estático.
