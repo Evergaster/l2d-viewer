@@ -380,3 +380,30 @@ Dos hechos, los dos útiles:
 Con esto, el siguiente paso ya no es «probar convenciones»: es **comparar vértice a vértice** una
 malla que cambia con `AngleZ` entre las dos poses (reposo y 10) para ver qué eslabón de su cadena
 se mueve de forma que el modelo no predice.
+
+### 5.10 El delta de `AngleZ` no se reproduce: el fallo es dinámico, no de desplazamiento
+
+Comparar posiciones absolutas entre poses arrastra el error de base (0,06–0,12 en las cadenas
+largas), que es **mayor** que el movimiento que produce el parámetro (0,013). Así que la
+comparación útil es el **delta**: `modelo(AngleZ=10) − modelo(reposo)` contra
+`oráculo(10) − oráculo(reposo)`. El offset constante se cancela solo.
+
+Resultado sobre las **93** mallas que se mueven con `AngleZ`:
+
+| Error del delta / movimiento | Mallas |
+|---|---|
+| < 10 % | **0/93** |
+| < 30 % | 2/93 |
+| mejor caso | 23 % (`ArtMesh27`) |
+| peor caso | 505 % (`ArtMesh67`) |
+
+Y un dato que ordena el problema: **todas** las mallas que responden a `AngleZ` tienen cadenas de
+**6 o más** deformadores (histograma: 5→2, 6→48, 7→12, 8→15, 9→4, 10→4, 11→4, 12→4). Ninguna
+cadena corta responde a ese parámetro.
+
+Conclusión: el colapso de `AngleZ=10` (3/134) **no era un fallo aparte** — es que esas mallas ya
+venían mal en reposo, y el delta confirma que el error es de *respuesta*, no de posición: la
+selección de keyform de algún eslabón de esas cadenas largas no cambia cuando debe.
+
+Ese es el objetivo único que queda: una cadena de 6 eslabones que responde a `AngleZ`, con el delta
+como juez — que no arrastra el error de base.
