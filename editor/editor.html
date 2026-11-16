@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>l2d · editor (prototipo)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; display:flex; height:100vh; font:13px/1.4 system-ui, sans-serif;
+         background:#15171a; color:#e6e6e6; }
+  #stage { flex:1; display:grid; place-items:center; background:
+           repeating-conic-gradient(#1c1f23 0% 25%, #22262b 0% 50%) 50%/24px 24px; }
+  #wrap { position:relative; }
+  #cv, #ov { display:block; max-height:96vh; max-width:96%; }
+  #ov { position:absolute; inset:0; pointer-events:none; }
+  #panel { width:300px; overflow-y:auto; padding:12px; background:#1a1d21;
+           border-left:1px solid #2a2f35; }
+  h1 { font-size:13px; margin:0 0 10px; letter-spacing:.5px; text-transform:uppercase;
+       color:#8b949e; }
+  .row { margin-bottom:9px; }
+  .row label { display:flex; justify-content:space-between; font-size:11px;
+               color:#9aa4ae; margin-bottom:2px; }
+  .row b { color:#e6e6e6; font-weight:500; }
+  input[type=range] { width:100%; }
+  #hint { color:#6b7480; font-size:11px; margin-top:14px; }
+  button { background:#2a2f35; color:#e6e6e6; border:1px solid #3a4149;
+           border-radius:4px; padding:4px 8px; cursor:pointer; font-size:11px; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="wrap"><canvas id="cv"></canvas><canvas id="ov"></canvas></div></div>
+<div id="panel">
+  <h1>Capas</h1>
+  <div id="parts" style="max-height:150px;overflow-y:auto;margin-bottom:10px"></div>
+  <h1>Parámetros</h1>
+  <div id="sliders"></div>
+  <button id="reset">Volver a reposo</button>
+  <button id="edit">Editar vértices</button>
+  <button id="undo">Deshacer</button>
+  <h1 style="margin-top:16px">Animación</h1>
+  <div class="row">
+    <label><span>tiempo</span><b id="tv">0.00 s</b></label>
+    <input type="range" id="time" min="0" max="5" step="0.01" value="0">
+  </div>
+  <button id="key">Añadir clave</button>
+  <button id="del">Borrar clave</button>
+  <button id="play">Reproducir</button>
+  <button id="export">Exportar .json</button>
+  <button id="loadbtn">Cargar .json</button>
+  <input type="file" id="loadfile" accept=".json,application/json" hidden>
+  <div id="hint2" style="color:#6b7480;font-size:11px;margin-top:8px"></div>
+  <div id="hint">Prototipo: geometría y deformación por el Core oficial;
+    rasterizado propio en WebGL. Modelos de muestra de Live2D.</div>
+</div>
+<script>
+// El Core de Live2D es propietario y NO se versiona en este repo (ver docs/05):
+// se intenta primero la copia local del SDK y, si no está, el CDN oficial.
+function cargarCore() {
+  return new Promise((ok, fallo) => {
+    const urls = [
+      new URL('../models/samples/live2dcubismcore.min.js', location.href).href,
+      'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js',
+    ];
+    let i = 0;
+    const siguiente = () => {
+      if (i >= urls.length) return fallo(new Error('no encontré live2dcubismcore.min.js (SDK local ni CDN)'));
+      const s = document.createElement('script');
+      s.src = urls[i++];
+      s.onload = () => window.Live2DCubismCore ? ok(window.Live2DCubismCore) : siguiente();
+      s.onerror = siguiente;
+      document.head.appendChild(s);
+    };
+    siguiente();
+  });
+}
+</script>
+<script>
+const qs = new URLSearchParams(location.search);
+const MODEL = qs.get('m') || 'Hiyori';
+// Se sirve la raíz del repo: el modelo sale de models/samples (no versionado).
+const RES = qs.get('res') || `../models/samples/Samples/Resources/${MODEL}/`;
+const cv = document.getElementById('cv');
+const gl = cv.getContext('webgl2', { premultipliedAlpha: true, alpha: true, stencil: true });
+
+function shader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, `#version 300 es
+in vec2 aPos; in vec2 aUv;
+uniform vec4 uCanvas;   // ox, oy, ppu, 0
+uniform vec2 uSize;     // w, h
+out vec2 vUv;
+void main() {
+  float x = (uCanvas.x + aPos.x * uCanvas.z) / uSize.x;
+  float y = (uCanvas.y + aPos.y * uCanvas.z) / uSize.y;
+  gl_Position = vec4(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+  vUv = vec2(aUv.x, 1.0 - aUv.y);   // Live2D: UV con origen arriba-izquierda
+}`));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, `#version 300 es
+precision mediump float;
+in vec2 vUv; uniform sampler2D uTex; uniform float uOpacity; uniform vec2 uTexel; out vec4 o;
+void main() {
+  vec2 uv = clamp(vUv, uTexel, vec2(1.0) - uTexel);   // evita sangrado en las costuras
+  vec4 c = texture(uTex, uv);
+  o = vec4(c.rgb * c.a, c.a) * uOpacity;   // premultiplicar en el shader
+}`));
+gl.bindAttribLocation(prog, 0, 'aPos');
+gl.bindAttribLocation(prog, 1, 'aUv');
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const uCanvas = gl.getUniformLocation(prog, 'uCanvas');
+const uSize = gl.getUniformLocation(prog, 'uSize');
+const uOpacity = gl.getUniformLocation(prog, 'uOpacity');
+const uTexel = gl.getUniformLocation(prog, 'uTexel');
+
+// programa de máscaras: escribe el esténcil y descarta por alfa
+const maskProg = gl.createProgram();
+gl.attachShader(maskProg, shader(gl.VERTEX_SHADER, `#version 300 es
+in vec2 aPos; in vec2 aUv;
+uniform vec4 uCanvas; uniform vec2 uSize;
+out vec2 vUv;
+void main() {
+  float x = (uCanvas.x + aPos.x * uCanvas.z) / uSize.x;
+  float y = (uCanvas.y + aPos.y * uCanvas.z) / uSize.y;
+  gl_Position = vec4(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+  vUv = vec2(aUv.x, 1.0 - aUv.y);
+}`));
+gl.attachShader(maskProg, shader(gl.FRAGMENT_SHADER, `#version 300 es
+precision mediump float;
+in vec2 vUv; uniform sampler2D uTex; uniform vec2 uTexel; out vec4 o;
+void main() {
+  vec2 uv = clamp(vUv, uTexel, vec2(1.0) - uTexel);
+  if (texture(uTex, uv).a < 0.5) discard;
+  o = vec4(1.0);
+}`));
+gl.bindAttribLocation(maskProg, 0, 'aPos');
+gl.bindAttribLocation(maskProg, 1, 'aUv');
+gl.linkProgram(maskProg);
+const mCanvas = gl.getUniformLocation(maskProg, 'uCanvas');
+const mSize = gl.getUniformLocation(maskProg, 'uSize');
+const mTexel = gl.getUniformLocation(maskProg, 'uTexel');
+
+async function loadImage(url) {
+  // createImageBitmap decodifica fuera del hilo de pintado; `img.decode()` se queda
+  // colgado cuando la pestaña no está pintando (ventana oculta o automatización).
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('http ' + r.status);
+  const blob = await r.blob();
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(blob); } catch (e) { /* cae al camino clásico */ }
+  }
+  const img = new Image();
+  img.src = URL.createObjectURL(blob);
+  await img.decode();
+  return img;
+}
+
+window.__ready = false;
+window.__error = null;
+window.__paso = 'inicio';   // diagnóstico: en qué paso del arranque se quedó
+let model, P, canvasInfo, items = [], uvsAll = [];
+
+(async () => {
+  try {
+    window.__paso = 'core';
+    const Core = await cargarCore();
+    window.__paso = 'moc3';
+    const buf = await (await fetch(RES + MODEL + '.moc3')).arrayBuffer();
+    const moc = Core.Moc.fromArrayBuffer(buf);
+    model = Core.Model.fromMoc(moc);
+    window.__paso = 'modelo';
+    P = model.parameters;
+    canvasInfo = model.canvasinfo;
+
+    const cw = canvasInfo.CanvasWidth, ch = canvasInfo.CanvasHeight;
+    const maxDim = 900;
+    const k = Math.min(1, maxDim / Math.max(cw, ch));
+    cv.width = Math.round(cw * k); cv.height = Math.round(ch * k);
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.uniform4f(uCanvas, canvasInfo.CanvasOriginX, canvasInfo.CanvasOriginY,
+                 canvasInfo.PixelsPerUnit, 0);
+    gl.uniform2f(uSize, cw, ch);
+    gl.useProgram(maskProg);
+    gl.uniform4f(mCanvas, canvasInfo.CanvasOriginX, canvasInfo.CanvasOriginY,
+                 canvasInfo.PixelsPerUnit, 0);
+    gl.uniform2f(mSize, cw, ch);
+    gl.useProgram(prog);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // premultiplicado
+    gl.clearColor(0, 0, 0, 0);
+
+    // atlas: los declara model3.json
+    window.__paso = 'atlas';
+    window.__dbg = {texFiles: null, loaded: 0, fail: []};
+    let texFiles = [];
+    try {
+      const m3 = await (await fetch(RES + MODEL + '.model3.json')).json();
+      texFiles = (m3 && m3.FileReferences && m3.FileReferences.Textures) || [];
+    } catch (e) { window.__dbg.fail.push('model3: ' + e.message); }
+    if (!texFiles.length) texFiles = ['texture_00.png'];
+
+    textures = [];
+    for (const f of texFiles) {
+      window.__paso = 'textura ' + f;
+      try {
+        const img = await loadImage(RES + f);
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        textures.push({ t, w: img.width, h: img.height });
+      } catch (e) { window.__dbg.fail.push(f + ': ' + e.message); }
+    }
+    window.__dbg.texFiles = texFiles;
+    window.__dbg.loaded = textures.length;
+
+    // parámetros en reposo
+    for (let i = 0; i < P.count; i++) P.values[i] = P.defaultValues[i];
+    model.update();
+
+    const d = model.drawables;
+    // mallas usadas como máscara: no se dibujan como arte
+    const esMascara = new Set();
+    for (let i = 0; i < d.count; i++) for (const m of d.masks[i]) esMascara.add(m);
+
+    for (let i = 0; i < d.count; i++) {
+      const idx = d.indices[i];
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      const posBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, d.vertexPositions[i], gl.DYNAMIC_DRAW);
+      const aPos = gl.getAttribLocation(prog, 'aPos');
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+      const uvBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, d.vertexUvs[i], gl.STATIC_DRAW);
+      const aUv = gl.getAttribLocation(prog, 'aUv');
+      gl.enableVertexAttribArray(aUv);
+      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 0, 0);
+
+      const ibo = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+
+      items.push({ vao, posBuf, ibo, n: idx.length, tex: d.textureIndices[i],
+                   order: d.renderOrders[i], id: d.ids[i], i, masks: Array.from(d.masks[i]) });
+    }
+    items.sort((a, b) => a.order - b.order);
+    // máscaras y áreas de impacto (HitArea) no son arte: no se dibujan
+    items = items.filter(it => !/^HitArea/i.test(it.id));
+    window.__esMascara = esMascara;
+    window.__porIndice = new Map(items.map(it => [it.i, it]));
+
+    window.__items = items; window.__model = model;
+    window.__render = render;
+    window.__setParam = (n, v) => {
+      const i = Array.from(P.ids).indexOf(n);
+      if (i < 0) return false;
+      P.values[i] = v;
+      const el = document.querySelector(`#sliders input[data-i="${i}"]`);
+      if (el) { el.value = v; const t = document.getElementById('v' + i); if (t) t.textContent = (+v).toFixed(2); }
+      render(); return true;
+    };
+    window.__items = items; window.__model = model;
+    window.__render = render;
+    window.__setParam = (n, v) => {
+      const i = Array.from(P.ids).indexOf(n);
+      if (i < 0) return false;
+      P.values[i] = v;
+      const el = document.querySelector(`#sliders input[data-i="${i}"]`);
+      if (el) { el.value = v; const t = document.getElementById('v' + i); if (t) t.textContent = (+v).toFixed(2); }
+      render(); return true;
+    };
+
+    // ---------- edición de vértices ----------
+    const ov = document.getElementById('ov');
+    const octx = ov.getContext('2d');
+    deltas = new Map();
+    const historia = [];
+    const E = { on: false, drag: null, sel: -1 };
+    window.__edit = E, window.__deltas = deltas;
+
+    function aPantalla(di, vi) {
+      const vp = model.drawables.vertexPositions[di];
+      const d = deltas.get(di + ':' + vi);
+      const x = vp[vi * 2] + (d ? d[0] : 0), y = vp[vi * 2 + 1] + (d ? d[1] : 0);
+      return [ (canvasInfo.CanvasOriginX + x * canvasInfo.PixelsPerUnit) * k,
+               (canvasInfo.CanvasOriginY + y * canvasInfo.PixelsPerUnit) * k ];
+    }
+    function aModelo(px, py) {
+      return [ px / k / canvasInfo.PixelsPerUnit - canvasInfo.CanvasOriginX / canvasInfo.PixelsPerUnit,
+               py / k / canvasInfo.PixelsPerUnit - canvasInfo.CanvasOriginY / canvasInfo.PixelsPerUnit ];
+    }
+    function verticeCerca(px, py, radio = 14) {
+      let best = null, bd = radio * radio;
+      for (const it of items) {
+        const vp = model.drawables.vertexPositions[it.i];
+        for (let v = 0; v < vp.length / 2; v++) {
+          const [sx, sy] = aPantalla(it.i, v);
+          const d = (sx - px) ** 2 + (sy - py) ** 2;
+          if (d < bd) { bd = d; best = { di: it.i, vi: v }; }
+        }
+      }
+      return best;
+    }
+    function pintarNodos() {
+      octx.clearRect(0, 0, ov.width, ov.height);
+      if (!E.on) return;
+      octx.fillStyle = 'rgba(90,170,255,.85)';
+      for (const it of items) {
+        if (E.sel >= 0 && it.i !== E.sel) continue;
+        const vp = model.drawables.vertexPositions[it.i];
+        for (let v = 0; v < vp.length / 2; v += (E.sel >= 0 ? 1 : 3)) {
+          const [sx, sy] = aPantalla(it.i, v);
+          octx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+        }
+      }
+    }
+    function coords(ev) {
+      const r = cv.getBoundingClientRect();
+      return [ (ev.clientX - r.left) * (ov.width / r.width),
+               (ev.clientY - r.top) * (ov.height / r.height) ];
+    }
+    cv.addEventListener('pointerdown', ev => {
+      if (!E.on) return;
+      const [px, py] = coords(ev);
+      const hit = verticeCerca(px, py);
+      if (!hit) { E.sel = -1; pintarNodos(); return; }
+      E.sel = hit.di;
+      historia.push(new Map(deltas));
+      E.drag = { ...hit, start: aModelo(px, py), base: (deltas.get(hit.di + ':' + hit.vi) || [0, 0]).slice() };
+      cv.setPointerCapture(ev.pointerId);
+      pintarNodos();
+    });
+    cv.addEventListener('pointermove', ev => {
+      if (!E.drag) return;
+      const [px, py] = coords(ev);
+      const m = aModelo(px, py);
+      deltas.set(E.drag.di + ':' + E.drag.vi, [
+        E.drag.base[0] + (m[0] - E.drag.start[0]),
+        E.drag.base[1] + (m[1] - E.drag.start[1]),
+      ]);
+      render(); pintarNodos();
+    });
+    cv.addEventListener('pointerup', () => { E.drag = null; });
+
+    document.getElementById('edit').onclick = ev => {
+      E.on = !E.on;
+      ev.target.textContent = E.on ? 'Salir de edición' : 'Editar vértices';
+      if (!E.on) E.sel = -1;
+      pintarNodos();
+    };
+    document.getElementById('undo').onclick = () => {
+      const prev = historia.pop();
+      if (!prev) return;
+      deltas.clear();
+      for (const [kk, vv] of prev) deltas.set(kk, vv);
+      render(); pintarNodos();
+    };
+    ov.width = cv.width; ov.height = cv.height;
+
+    // ---------- capas (partes) ----------
+    const ocultas = new Set();
+    window.__ocultas = ocultas;
+    (function panelCapas() {
+      const cont = document.getElementById('parts');
+      const pa = model.parts;
+      for (let i = 0; i < pa.count; i++) {
+        const id = pa.ids[i];
+        const fila = document.createElement('label');
+        fila.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;color:#9aa4ae;padding:1px 0';
+        fila.innerHTML = `<input type="checkbox" checked data-p="${i}"> <span>${id}</span>`;
+        fila.querySelector('input').addEventListener('change', ev => {
+          if (ev.target.checked) ocultas.delete(i); else ocultas.add(i);
+          render();
+        });
+        cont.appendChild(fila);
+      }
+      // Variantes mutuamente excluyentes: PartArmA / PartArmB.
+      // El modelo trae dos juegos completos de brazo y el autor espera que solo uno esté
+      // activo; por defecto se deja el primero y se oculta el segundo.
+      const ids = Array.from(pa.ids);
+      ids.forEach((id, i) => {
+        const m = /^(.*)A$/.exec(id);
+        if (m && ids.includes(m[1] + 'B')) {
+          const j = ids.indexOf(m[1] + 'B');
+          ocultas.add(j);
+          const cb = cont.querySelector(`input[data-p="${j}"]`);
+          if (cb) cb.checked = false;
+        }
+      });
+    })();
+
+    // ---------- animación por claves ----------
+    const anim = { keys: [], t: 0, dur: 5, playing: false, raf: 0 };
+    window.__anim = anim;
+    const $ = id => document.getElementById(id);
+
+    function instantanea() { return Array.from(P.values); }
+
+    function aplicarEn(t) {
+      const ks = anim.keys;
+      if (!ks.length) return;
+      if (t <= ks[0].t) { P.values.set(ks[0].v); return; }
+      if (t >= ks[ks.length - 1].t) { P.values.set(ks[ks.length - 1].v); return; }
+      for (let i = 0; i < ks.length - 1; i++) {
+        const a = ks[i], b = ks[i + 1];
+        if (t >= a.t && t <= b.t) {
+          const u = (t - a.t) / Math.max(1e-6, b.t - a.t);
+          for (let j = 0; j < P.count; j++) P.values[j] = a.v[j] + (b.v[j] - a.v[j]) * u;
+          return;
+        }
+      }
+    }
+
+    function pintarTimeline() {
+      $('hint2').textContent = anim.keys.length
+        ? anim.keys.map(k => k.t.toFixed(2) + 's').join(' · ')
+        : 'sin claves';
+      $('tv').textContent = anim.t.toFixed(2) + ' s';
+      $('time').value = anim.t;
+      // reflejar valores en los sliders
+      document.querySelectorAll('#sliders input').forEach(inp => {
+        const i = +inp.dataset.i;
+        inp.value = P.values[i];
+        const v = document.getElementById('v' + i);
+        if (v) v.textContent = P.values[i].toFixed(2);
+      });
+    }
+
+    $('key').onclick = () => {
+      const t = +($('time').value);
+      const v = instantanea();
+      const i = anim.keys.findIndex(k => Math.abs(k.t - t) < 1e-3);
+      if (i >= 0) anim.keys[i].v = v; else anim.keys.push({ t, v });
+      anim.keys.sort((a, b) => a.t - b.t);
+      pintarTimeline();
+    };
+
+    $('time').oninput = ev => {
+      anim.t = +ev.target.value;
+      aplicarEn(anim.t);
+      render(); pintarTimeline();
+    };
+
+    $('play').onclick = () => {
+      if (anim.playing) { anim.playing = false; cancelAnimationFrame(anim.raf); $('play').textContent = 'Reproducir'; return; }
+      if (!anim.keys.length) return;
+      anim.playing = true; $('play').textContent = 'Parar';
+      const t0 = performance.now() - anim.t * 1000;
+      const paso = now => {
+        if (!anim.playing) return;
+        anim.t = ((now - t0) / 1000) % anim.dur;
+        aplicarEn(anim.t);
+        render(); pintarTimeline();
+        anim.raf = requestAnimationFrame(paso);
+      };
+      anim.raf = requestAnimationFrame(paso);
+    };
+
+    $('export').onclick = () => {
+      const doc = {
+        formato: 'l2d-anim/1',
+        modelo: MODEL,
+        duracion: anim.dur,
+        parametros: anim.keys.length ? Array.from(P.ids) : [],
+        claves: anim.keys.map(k => ({ t: +k.t.toFixed(3), valores: k.v.map(x => +x.toFixed(4)) })),
+      };
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+      a.download = MODEL + '.anim.json';
+      a.click();
+      $('hint2').textContent = 'exportado: ' + a.download;
+    };
+
+    // ---------- cargar `l2d-anim/1` (el camino de vuelta del exportador) ----------
+    // Reglas de spec/01-formato-animacion.md: `parametros` debe coincidir con la del modelo,
+    // `claves` ordenadas por t y sin repetir t, y una clave por cada t del archivo.
+    function cargarAnim(doc) {
+      if (!doc || doc.formato !== 'l2d-anim/1') {
+        throw new Error(`formato «${doc && doc.formato}»: esperaba l2d-anim/1`);
+      }
+      const ids = Array.from(P.ids);
+      const par = doc.parametros || [];
+      if (par.length !== ids.length) {
+        throw new Error(`el archivo declara ${par.length} parámetros y el modelo tiene ${ids.length}`);
+      }
+      for (let i = 0; i < par.length; i++) {
+        if (par[i] !== ids[i]) {
+          throw new Error(`parámetro ${i} es «${par[i]}» en el archivo y «${ids[i]}» en el modelo`);
+        }
+      }
+      const claves = Array.isArray(doc.claves) ? doc.claves : null;
+      if (!claves || !claves.length) throw new Error('el archivo no trae claves');
+
+      const nuevas = [];
+      let previa = -Infinity;
+      for (const k of claves) {
+        const t = +k.t;
+        if (!Number.isFinite(t)) throw new Error(`tiempo inválido: ${k.t}`);
+        if (t < previa) throw new Error(`claves desordenadas: ${t} después de ${previa}`);
+        if (t === previa) throw new Error(`dos claves con el mismo tiempo: ${t}`);
+        previa = t;
+        const v = k.valores;
+        if (!Array.isArray(v) || v.length !== ids.length) {
+          throw new Error(`la clave en ${t}s trae ${v && v.length} valores y hacen falta ${ids.length}`);
+        }
+        const f = new Float32Array(P.count);
+        f.set(P.defaultValues);            // parámetros ausentes vuelven a reposo
+        for (let i = 0; i < v.length; i++) f[i] = +v[i];
+        nuevas.push({ t, v: f });
+      }
+
+      anim.keys = nuevas;
+      anim.t = 0;
+      const dur = +doc.duracion;
+      anim.dur = Number.isFinite(dur) && dur > 0 ? dur : Math.max(1, nuevas[nuevas.length - 1].t);
+      $('time').max = String(Math.max(anim.dur, nuevas[nuevas.length - 1].t));
+      aplicarEn(0);
+      render(); pintarTimeline();
+      return { claves: nuevas.length, dur: anim.dur };
+    }
+    window.__cargarAnim = cargarAnim;
+
+    $('loadbtn').onclick = () => $('loadfile').click();
+    $('loadfile').onchange = async ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';                 // permite volver a elegir el mismo archivo
+      if (!f) return;
+      try {
+        const doc = JSON.parse(await f.text());
+        const r = cargarAnim(doc);
+        $('hint2').textContent = `cargado ${f.name}: ${r.claves} claves, ${r.dur}s`;
+      } catch (e) {
+        $('hint2').textContent = 'error al cargar: ' + e.message;
+        console.error(e);
+      }
+    };
+
+    $('del').onclick = () => {
+      const t = +($('time').value);
+      const i = anim.keys.findIndex(k => Math.abs(k.t - t) < 1e-3);
+      if (i < 0) { $('hint2').textContent = `no hay clave en ${t.toFixed(2)}s`; return; }
+      anim.keys.splice(i, 1);
+      if (anim.keys.length) aplicarEn(anim.t); else {
+        for (let j = 0; j < P.count; j++) P.values[j] = P.defaultValues[j];
+        render();
+      }
+      pintarTimeline();
+    };
+
+    buildSliders();
+    window.__ready = true;
+    render();
+  } catch (e) {
+    window.__error = String(e && e.message || e);
+    console.error(e);
+  }
+})();
+
+function buildSliders() {
+  const cont = document.getElementById('sliders');
+  for (let i = 0; i < P.count; i++) {
+    const id = P.ids[i], min = P.minimumValues[i], max = P.maximumValues[i];
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<label><span>${id.replace(/^Param/, '')}</span><b id="v${i}">${P.values[i].toFixed(2)}</b></label>
+      <input type="range" min="${min}" max="${max}" step="0.01" value="${P.values[i]}" data-i="${i}">`;
+    row.querySelector('input').addEventListener('input', ev => {
+      const k = +ev.target.dataset.i;
+      P.values[k] = +ev.target.value;
+      document.getElementById('v' + k).textContent = (+ev.target.value).toFixed(2);
+      render();
+    });
+    cont.appendChild(row);
+  }
+  document.getElementById('reset').onclick = () => {
+    for (let i = 0; i < P.count; i++) P.values[i] = P.defaultValues[i];
+    document.querySelectorAll('#sliders input').forEach(inp => {
+      const k = +inp.dataset.i;
+      inp.value = P.defaultValues[k];
+      document.getElementById('v' + k).textContent = P.defaultValues[k].toFixed(2);
+    });
+    render();
+  };
+}
+
+function subirVertices(it, d) {
+  const i = it.i;
+  gl.bindBuffer(gl.ARRAY_BUFFER, it.posBuf);
+  const vp = d.vertexPositions[i];
+  let subir = vp, tiene = false;
+  for (const kk of deltas.keys()) { if (kk.startsWith(i + ':')) { tiene = true; break; } }
+  if (tiene) {
+    subir = vp.slice();
+    for (let v = 0; v < vp.length / 2; v++) {
+      const dd = deltas.get(i + ':' + v);
+      if (dd) { subir[v * 2] = vp[v * 2] + dd[0]; subir[v * 2 + 1] = vp[v * 2 + 1] + dd[1]; }
+    }
+  }
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, subir);
+}
+
+function usarTextura(idx) {
+  const tx = textures[idx] || textures[0];
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tx.t);
+  return tx;
+}
+
+function render() {
+  model.update();
+  const d = model.drawables;
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+  gl.bindVertexArray(null);
+  gl.useProgram(prog);
+
+  for (const it of items) {
+    const i = it.i;
+    if (window.__esMascara.has(i)) continue;          // geometría auxiliar
+    // Opacidad final = malla × parte (Cubism las multiplica al dibujar).
+    const parte = d.parentPartIndices[i];
+    const opParte = (parte >= 0 && model.parts) ? model.parts.opacities[parte] : 1;
+    let op = d.opacities[i] * opParte;
+    if (window.__ocultas && window.__ocultas.has(parte)) op = 0;
+    if (op <= 0.001) continue;
+
+    // --- pase de máscara: se escribe el esténcil con la forma de cada máscara
+    const tieneMascara = it.masks.length > 0;
+    if (tieneMascara) {
+      gl.enable(gl.STENCIL_TEST);
+      gl.clear(gl.STENCIL_BUFFER_BIT);
+      gl.colorMask(false, false, false, false);
+      gl.useProgram(maskProg);
+      gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+      for (const mi of it.masks) {
+        const mm = window.__porIndice.get(mi);
+        if (!mm) continue;
+        subirVertices(mm, d);
+        gl.bindVertexArray(mm.vao);
+        const tx = usarTextura(mm.tex);
+        gl.uniform2f(mTexel, 0.5 / tx.w, 0.5 / tx.h);
+        gl.drawElements(gl.TRIANGLES, mm.n, gl.UNSIGNED_SHORT, 0);
+      }
+      gl.colorMask(true, true, true, true);
+      gl.useProgram(prog);
+      gl.stencilFunc(gl.EQUAL, it.masks.length, 0xff);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    }
+
+    subirVertices(it, d);
+    gl.bindVertexArray(it.vao);
+    const tx = usarTextura(it.tex);
+    gl.uniform2f(uTexel, 0.5 / tx.w, 0.5 / tx.h);
+    gl.uniform1f(uOpacity, op);
+    gl.drawElements(gl.TRIANGLES, it.n, gl.UNSIGNED_SHORT, 0);
+
+    if (tieneMascara) gl.disable(gl.STENCIL_TEST);
+  }
+  window.__frames = (window.__frames || 0) + 1;
+}
+
+// `textures` se rellena en el arranque; se declara aquí para que render() lo vea.
+var textures = [];
+var deltas = new Map();   // desplazamientos "malla:vértice" -> [dx,dy]
+</script>
+</body>
+</html>

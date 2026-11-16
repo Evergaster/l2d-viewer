@@ -17,7 +17,7 @@ supuesto. Números medidos hoy, 14 nov 2026.
 | Manifiesto `.model3.json` | `crates/model3/src/lib.rs` | 183 líneas | ✅ 3 pruebas |
 | Rasterizador CPU (UV bilineal, 3 blend modes, máscaras, PNG) | `crates/raster/src/lib.rs` | 362 líneas | ✅ 4 pruebas |
 | CLI `l2d` | `crates/l2d/src/main.rs` | 762 líneas | ✅ 7 subcomandos |
-| Editor | `models/samples/editor.html` | 564 líneas | ✅ prototipo funcional (WebGL2 sobre el Core) |
+| Editor | `editor/editor.html` | 679 líneas | ✅ prototipo funcional (WebGL2 sobre el Core) |
 | Formato de animación | `spec/01-formato-animacion.md` | — | ✅ `l2d-anim/1` documentado y usado por el exportador |
 
 Total Rust: **2 327 líneas**. `cargo test`: **12 pruebas unitarias + 1 doctest = 13, todas verdes**
@@ -52,13 +52,14 @@ Capturas en `docs/editor-*.png`, generadas sirviendo `models/samples` por HTTP.
 
 | Falta | Consecuencia visible | Dificultad | Nota |
 |---|---|---|---|
-| **Cargar** una animación exportada | el `.json` se puede exportar pero no volver a abrir: el ciclo se corta | baja (parsear y poblar `anim.keys`) | es el siguiente ladrillo natural |
-| Editar / borrar claves existentes | solo añadir; corregir una clave obliga a rehacer la animación | baja | mismo módulo que cargar |
 | Guardar el modelo editado | los cambios de vértices mueren al cerrar la pestaña | media-alta | implica escribir `.moc3` (hito H5) o un formato propio `.l2d` |
 | **Rig propio en Rust** (`pose`, `edit`, `io`, `ui`, `anim`) | el editor depende del Core oficial para deformar | alta | `docs/09` concluye que no hace falta replicar Cubism, pero sí escribir el evaluador propio |
 | Deformadores warp / rotation | el parser propio no puede componer la pose por sí solo | alta | es el corazón del runtime; `keyform_position.xys` es un pool compartido (ver §6) |
 | `draw_order_group` | empates de orden resueltos por orden de archivo | media | solo afecta al render del parser propio |
 | Ventana nativa | el editor vive en el navegador | media | exige `winit`/`wgpu`, fuera del alcance actual |
+
+**Hecho después de este cierre** (16 nov, `docs/11`): **cargar** una animación exportada y
+**borrar** claves. El ciclo de `l2d-anim/1` está cerrado y verificado en navegador.
 
 **Veredicto:** hay un **editor usable** y un **lector de formato sólido**, pero siguen siendo dos
 cosas separadas: el editor deforma con el Core, el parser lee sin deformar. Unirlas es el rig propio
@@ -119,8 +120,8 @@ Ninguna de las tres bloquea el editor actual; las tres bloquean el visor indepen
 ```bash
 cd ~/Proyectos/l2d-viewer
 
-# 0. antes de tocar nada: no hay control de versiones (ver §9)
-git init && git add -A && git commit -m "estado al cierre del editor"
+# 0. el repo ya existe: trabajar en dev (main es la rama estable)
+git switch dev && git pull
 
 # 1. verificar que sigue verde
 cargo test
@@ -135,10 +136,10 @@ cargo run -p l2d -- oracle models/samples/hiyori.oracle.json \
   models/samples/Samples/Resources/Hiyori/texture_00.png out/hiyori.png 0.5
 ```
 
-Siguiente trabajo, ya sin ambigüedad: **cargar el `.json` exportado en el editor** (baja), y detrás
-**el evaluador propio en Rust** (`crates/pose`: elegir keyform por valor de parámetro, luego warp y
-rotation). Los hitos H1–H5 de `docs/08` siguen vigentes con la corrección de `docs/09`: H5
-(escribir `.moc3`) se pospone a favor de un formato propio.
+Siguiente trabajo, ya sin ambigüedad: **guardar el modelo editado** (formato propio `.l2d`, porque
+escribir `.moc3` se pospuso en `docs/09`) y detrás **el evaluador propio en Rust** (`crates/pose`:
+elegir keyform por valor de parámetro, luego warp y rotation). Los hitos H1–H5 de `docs/08` siguen
+vigentes con la corrección de `docs/09`. Cargar animaciones se cerró el 16 nov (`docs/11`).
 
 ---
 
@@ -147,16 +148,16 @@ rotation). Los hitos H1–H5 de `docs/08` siguen vigentes con la corrección de 
 - **Visor independiente:** render de Hiyori sin Core, con error < 2 px por vértice contra el JSON del
   oráculo. Hoy no.
 - **Editor completo:** cargar lo exportado, editar y borrar claves, guardar el modelo y reabrirlo con
-  solo los cambios aplicados. Hoy: 1 de 4.
-- **Animación:** `l2d-anim/1` de ida y vuelta sin pérdida. Hoy: solo ida.
+  solo los cambios aplicados. Hoy: 3 de 4 (falta guardar; `docs/11`).
+- **Animación:** `l2d-anim/1` de ida y vuelta sin pérdida. Hoy: **sí**, verificado en navegador el
+  16 de noviembre.
 
 ---
 
 ## 9. Deudas y riesgos
 
-- **No es un repositorio git.** `~/Proyectos/l2d-viewer` no tiene `.git`: 2 327 líneas y nueve
-  documentos sin historial, sin diff y sin vuelta atrás. Es la deuda más barata de pagar hoy y la más
-  cara de no pagar.
+- ~~**No es un repositorio git.**~~ **Resuelto el 16 nov** (`docs/11`): público en
+  https://github.com/Evergaster/l2d-viewer, `main` estable y `dev` para desarrollo.
 - **Los modelos de muestra no se versionan** (son de Live2D y su licencia no lo permite). Un clon
   nuevo no puede correr ni las pruebas de render ni el editor sin volver a bajarlos.
 - **Límite legal**: el EULA del editor (§5.1.1) prohíbe portarlo o modificarlo; por eso este código
@@ -167,4 +168,5 @@ rotation). Los hitos H1–H5 de `docs/08` siguen vigentes con la corrección de 
 ---
 
 *Este cierre no dice «el visor está listo». Dice: el editor existe, sus números están medidos, sus
-tres bloqueadores tienen nombre, y el siguiente paso es uno solo — cargar lo que ya se exporta.*
+tres bloqueadores tienen nombre, y el siguiente paso era uno solo — cargar lo que ya se exporta
+(hecho el 16 nov, `docs/11`).*

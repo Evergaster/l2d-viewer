@@ -27,5 +27,7 @@ Reglas:
 - `duracion` mayor que el último `t` deja una cola quieta; el reproductor hace bucle.
 - Valores redondeados a 4 decimales: sobra precisión para una imagen de 8 bits.
 
-Implementado en `models/samples/editor.html` (botón **Exportar .json**). Pendiente: cargar un
-archivo — leer, validar orden y longitudes, aplicar.
+Implementado en `editor/editor.html`: **Exportar .json** y **Cargar .json** (ida y vuelta
+verificada, 140 cifras idénticas en la prueba de dos claves) más **Borrar clave**. La carga rechaza
+el archivo con el motivo concreto si falla el formato, la lista de `parametros`, el orden de `t` o la
+longitud de `valores`; un archivo rechazado no toca la animación abierta.

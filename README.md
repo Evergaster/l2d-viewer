@@ -19,7 +19,8 @@ y del *comportamiento*, no del código.
 | Selección de keyform por parámetro | ✅ calibrada contra el Core: el keyform de reposo es el 0 (`docs/07`) |
 | **Evaluador propio (deformadores warp/rotation)** | ⬜ **bloqueador del visor independiente** |
 | Editor: sliders, vértices, capas, máscaras, claves, timeline, export | ✅ prototipo funcional (sobre el Core) |
-| Cargar lo exportado, editar/borrar claves, guardar el modelo | ⬜ |
+| Cargar lo exportado y borrar claves (ida y vuelta de `l2d-anim/1`) | ✅ verificado en navegador |
+| Guardar el modelo editado | ⬜ |
 | `draw_order_group`, ventana nativa | ⬜ |
 
 > Estado real: lector de formato sólido, renderizador de geometría correcto y un **editor usable**
@@ -101,8 +102,8 @@ tools/editor.sh            # Hiyori por defecto
 tools/editor.sh Wanko
 ```
 
-Sirve `models/samples` por HTTP y abre `editor.html`: lienzo con el personaje y **panel de
-sliders** para todos sus parámetros (70 en Hiyori). Al mover un slider, el modelo se deforma y
+Sirve la **raíz del repo** por HTTP y abre `editor/editor.html`: lienzo con el personaje y **panel
+de sliders** para todos sus parámetros (70 en Hiyori). Al mover un slider, el modelo se deforma y
 se redibuja en el acto.
 
 Cómo está hecho: geometría y deformación por el **Core oficial** (SDK); rasterizado propio en
@@ -147,15 +148,22 @@ La opacidad con la que se dibuja cada malla es **malla × parte × visibilidad d
 
 Panel **Animación**: se fija un tiempo, se mueven los sliders y se pulsa **Añadir clave**.
 **Reproducir** interpola linealmente entre claves y hace bucle; **Exportar .json** descarga la
-animación en el formato `l2d-anim/1` (`spec/01-formato-animacion.md`).
+animación en el formato `l2d-anim/1` (`spec/01-formato-animacion.md`) y **Cargar .json** la vuelve a
+abrir: el ciclo está cerrado y el archivo se valida al entrar (formato, lista de parámetros, orden y
+longitud de las claves). **Borrar clave** quita la del tiempo actual.
 
 ![timeline](docs/editor-timeline.png)
 
 Verificado: dos claves (`AngleZ` −20 en 0 s, +20 en 2 s) dan 0 en 1 s y 10 en 1,5 s; la
 reproducción avanza con el reloj real y repinta.
 
-Lo que falta: **cargar** una animación exportada, editar/borrar claves y guardar el modelo. Ver
-`docs/08-editor-arquitectura.md`.
+Y verificado en navegador: exportar esas dos claves y volver a cargar el archivo deja **las 140
+cifras idénticas** (70 parámetros × 2 claves), con la misma duración; los archivos mal formados se
+rechazan con el motivo exacto y no tocan la animación que estaba abierta.
+
+![cargar](docs/editor-cargar.png)
+
+Lo que falta: **guardar el modelo** editado. Ver `docs/08-editor-arquitectura.md`.
 
 ## Ramas
 
