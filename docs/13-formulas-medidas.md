@@ -204,3 +204,30 @@ Dos conclusiones:
 2. Pero **no lo explica todo**: aun con la mejor combinación quedan 0,0065 unidades. Queda un error
    sistemático pequeño en la rotación (candidatos: `reflect` en algún eslabón, o el origen como
    pivote en algunos deformadores). Ese es el siguiente hilo, y es medible igual que los demás.
+
+### 5.2 Por qué no cierra con una sola elección: el Core **mezcla** keyforms
+
+Medido con `tools/rot-variantes.py` y una comprobación afín (`docs/13` §5.1 sigue):
+
+1. En `ArtMesh102`/`106` el oráculo **no es afín** en la entrada: ajustando un afín libre sobre
+   todos los vértices queda un residuo de **0,0047**. Una cadena de sólo rotaciones es afín por
+   construcción, así que el Core está haciendo algo **no afín** ahí.
+2. Probadas 8 variantes de fórmula (pivote, ángulo negado, reflejos antes/después, escala en el
+   origen, sin reflejo) y todas las combinaciones por eslabón: nada baja de 0,0061. La fórmula no
+   es el problema.
+3. El orden **hoja→raíz** queda confirmado: raíz→hoja da 719/1438 de error.
+4. Dato clave: la banda 7 tiene claves `[0, 1]` para `ParamEyeLOpen`, y `Rotation22`/`Rotation23`
+   tienen keyforms con orígenes de `-718` y `-828` unidades — estados extremos de una animación de
+   parpadeo, no poses de reposo.
+
+**Hipótesis que queda (y es la de Cubism):** el Core no elige un keyform, **interpola entre los
+dos keyforms vecinos** según el valor del parámetro (peso lineal, y al cruzar parámetros el índice
+es el producto mixto). Eso explica las tres cosas a la vez: el residuo no afín de estas dos mallas,
+que la «excepción» de la banda 7 caiga en el índice 1 (está entre dos claves), y el error pequeño
+y sistemático que arrastran las cadenas largas.
+
+Un primer intento de mezcla lineal de `ang/origen/escala` (mismo script, función `pesos`) dio el
+mismo 0,078: falta comprobar **qué** se mezcla (¿parámetros, o matrices? ¿peso por tramo de claves
+o por valor normalizado del parámetro?) y con qué regla se combinan varios parámetros en un mismo
+deformador. Ese es el siguiente experimento, y es el bueno: si la mezcla entra, el error de las
+cadenas largas debería caer con ella.
