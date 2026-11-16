@@ -231,3 +231,33 @@ mismo 0,078: falta comprobar **qué** se mezcla (¿parámetros, o matrices? ¿pe
 o por valor normalizado del parámetro?) y con qué regla se combinan varios parámetros en un mismo
 deformador. Ese es el siguiente experimento, y es el bueno: si la mezcla entra, el error de las
 cadenas largas debería caer con ella.
+
+### 5.3 La mezcla no era; el orden de las claves sí pesa (medido)
+
+`tools/rot-mezcla.py` prueba cuatro modos de selección para las rotaciones en las **134** mallas:
+
+| Modo | <1e-3 | <6,7e-4 (2 px) | Mediana | Máx |
+|---|---|---|---|---|
+| D keyform más cercano | 77 | 76 | 3,0·10⁻⁴ | 1,2·10⁻¹ |
+| A parámetros mezclados | 77 | 76 | 3,0·10⁻⁴ | 1,2·10⁻¹ |
+| B salidas (matrices) mezcladas | 77 | 76 | 3,0·10⁻⁴ | 1,2·10⁻¹ |
+| C peso por valor normalizado | 61 | 60 | 1,4·10⁻³ | 3,6·10⁻¹ |
+
+**La mezcla no mejora nada** (A y B dan idéntico a D) y la variante C empeora. Descartada.
+
+Lo que sí pesa: con el **orden de claves invertido** (`k → n_kf−1−k`) las dos mallas problemáticas
+bajan de 0,078 y 0,092 a **0,0081** y **0,0064** — casi exactamente el mínimo que daba la búsqueda
+exhaustiva de combinaciones (0,0065 y 0,0063). O sea:
+
+- El error dominante de ese par **es la convención de orden** de los keyforms en su banda
+  (`Band 7`, `ParamEyeBallX`, claves `[0,1]`, valor por defecto 0 → la regla natural da el índice 0
+  y el Core se comporta como el 1).
+- Aun así queda un residuo de ~0,006 que **no** se explica por la selección ni por la mezcla.
+
+El oráculo se genera con `dump.html`, que **sí** copia los valores por defecto antes de `update()`
+(verificado en el archivo), y `ParamAngleZ` tiene defecto 0 con claves `[-10, 0, 10]` — así que no
+es que el Core esté en otra pose.
+
+**Siguiente hilo, con dos candidatos concretos:** (a) que el orden de keyforms por banda no sea
+«orden de archivo» sino que haya que deducirlo de otro campo, y (b) que el residuo de ~0,006 venga
+del `reflect`/escala de un eslabón concreto — se puede aislar igual que se aisló el warp.
