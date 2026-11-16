@@ -187,3 +187,20 @@ La mediana ya está en **0,9 px** (ppu = 2976), por debajo del criterio de 2 px 
 2. **Cadenas largas que pasan por `Warp1`** (`ArtMesh88`, `ArtMesh83`, `ArtMesh91`, `ArtMesh75`,
    `ArtMesh80`, 0,06–0,07): cinco a ocho deformadores encadenados; el error se acumula o el
    dominio de un eslabón intermedio no es afín. Es el siguiente objetivo.
+
+### 5.1 La excepción de keyform no es sólo la selección (medido)
+
+Probadas **todas** las combinaciones de keyform para las dos mallas de sólo rotaciones:
+
+| Malla | Combinación de la regla | Mejor combinación medida | Error de la mejor |
+|---|---|---|---|
+| `ArtMesh102` (Rot22→Rot21→Rot24) | (0, 0, 1) → 0,078 | **(1, 1, 2)** | **0,0065** (~19 px) |
+| `ArtMesh106` (Rot23→Rot22→Rot21→Rot24) | (0, 0, 0, 1) → 0,092 | **(1, 1, 1, 0)** | **0,0063** (~19 px) |
+
+Dos conclusiones:
+
+1. La selección de keyform sí está mal ahí: la regla elige 0 donde el Core usa 1 (banda 7, claves
+   en `keys[22..23]`). Cambiarla baja el error **12×**.
+2. Pero **no lo explica todo**: aun con la mejor combinación quedan 0,0065 unidades. Queda un error
+   sistemático pequeño en la rotación (candidatos: `reflect` en algún eslabón, o el origen como
+   pivote en algunos deformadores). Ese es el siguiente hilo, y es medible igual que los demás.
