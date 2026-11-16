@@ -621,3 +621,40 @@ tipo `Bool`), y el motor asume bilineal siempre. Esa es la explicación estructu
 4. Validar con el **delta** entre poses, que es el juez que no se deja engañar.
 
 Nada de esto se ha probado todavía: es lo que hay que hacer, no lo que se hizo.
+
+### 5.20 Probado: la interpolación **no** cambia nada en reposo (y el flag, localizado)
+
+Localizado el candidato a flag en el archivo: la única sección de 50 entradas 0/1 con **mezcla**
+está en el offset del SOT **41** (`0x00008800`): **17 warps legacy y 33 bilineales**. Las demás
+candidatas (SOT 13, 14, 37, 38) son todas 1.
+
+Probado en las 134 mallas en reposo, dominio `[0,1]²`, eligiendo interpolación por ese flag:
+
+| Fuente de flags | < 1e-3 | mediana |
+|---|---|---|
+| SOT 37 / 38 / 13 / 14 (todo bilineal) | 12/134 | 0,03268 |
+| **SOT 41 (17 legacy / 33 bilineal)** | **12/134** | **0,03268** |
+| legacy en todos | 12/134 | 0,03268 |
+
+**Idéntico hasta el último decimal.** Con dominio `[0,1]²`, cambiar la interpolación no mueve la
+aguja: el error de 0,0327 no viene de ahí. Y los 77/134 de la calibración venían de mover los
+rectángulos, no de la interpolación.
+
+### 5.21 Dónde queda esto (cierre de la tanda)
+
+Dos hechos que hay que reconciliar antes de seguir, y que hoy no se reconcilian:
+
+1. La **especificación** dice que la entrada del warp es `[0,1]²` uniforme. Si eso es cierto, los
+   rectángulos calibrados (0,569×0,798 para `Warp1`) no deberían existir y el reposo tendría que
+   cuadrar sin tocarlos — y no cuadra (12/134).
+2. Con los rectángulos calibrados, el reposo sí cuadra (77/134) pero la **dinámica** frente al
+   parámetro está mal (§5.15, §5.16).
+
+Lo que queda por resolver, en una frase: **cómo se convierte la posición de un hijo al espacio
+`[0,1]²` del warp**. La spec lo da por supuesto; los números dicen que en este archivo esa
+conversión no es la identidad. Candidatos, en orden: (a) invertir la rejilla **base** del propio
+warp, (b) la rejilla base de su **keyform en reposo**, (c) un rectángulo que sí viene de algún campo
+que aún no se lee.
+
+Todo lo demás está medido y descartado con números en este documento. El siguiente que lo retome
+empieza por ahí, y ya sabe qué NO hace falta volver a probar: catorce hipótesis.
