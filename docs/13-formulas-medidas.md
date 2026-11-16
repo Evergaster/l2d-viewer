@@ -356,3 +356,27 @@ Queda por tanto **una sola cosa por descubrir**: cómo se ordenan los keyforms d
 cuando hay más de un parámetro. Es el único punto que separa 77/134 de la exactitud, y ahora hay
 con qué medirlo: tres oráculos, `keyform-medir.py` con búsqueda exhaustiva y 14 cadenas cortas de
 banco de pruebas.
+
+### 5.9 El modelo reproduce dos poses y **no** la tercera (medido)
+
+Barrido de cuatro convenciones de índice (segmento, cota superior, cota superior por la derecha,
+más cercano) × tres oráculos, recalculando también el keyform **de la malla** según la pose:
+
+| Convención | reposo | `AngleZ=10` | `EyeBallX=1` |
+|---|---|---|---|
+| cota superior (`searchsorted left`) | 67/134 | **3/134** | 70/134 |
+| más cercano | = | = | = |
+| segmento / cota derecha | 2/14 en cadenas cortas | 2/14 | 2/14 |
+
+Dos hechos, los dos útiles:
+
+1. **`AngleZ=10` rompe el modelo entero** (3/134), mientras `EyeBallX=1` se comporta como el
+   reposo (70/134). El problema no es «el modelo está mal en general»: hay un mecanismo que se
+   dispara **específicamente** con `ParamAngleZ` a 10. Es el sitio exacto donde mirar.
+2. La convención de índice **no** es la que explica la diferencia: con cualquiera de las cuatro,
+   `AngleZ=10` colapsa igual. Así que el fallo de esa pose viene de otra parte (selección de
+   keyform de un deformador concreto, o de la malla, con ese parámetro).
+
+Con esto, el siguiente paso ya no es «probar convenciones»: es **comparar vértice a vértice** una
+malla que cambia con `AngleZ` entre las dos poses (reposo y 10) para ver qué eslabón de su cadena
+se mueve de forma que el modelo no predice.
