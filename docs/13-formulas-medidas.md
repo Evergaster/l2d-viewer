@@ -290,3 +290,24 @@ copia los valores por defecto antes de actualizar. Generar oráculos en 3–5 va
 la selección de keyform en algo **medible directamente**: se ve qué keyform (o qué mezcla) usa el
 Core para cada valor, sin inferirlo. Ese es el siguiente paso, y es barato: el navegador y el
 `http.server` ya están probados en este repo.
+
+### 5.6 Media de la selección, sobre cualquier pose (herramienta nueva)
+
+`tools/keyform-medir.py` recorre **todas** las combinaciones de keyform de cada cadena corta
+contra un oráculo cualquiera y compara la mejor combinación con la que predice la regla.
+
+Primera corrida (cola de 14 cadenas de hasta 4 deformadores, oráculo de reposo):
+
+```
+medidas: 14   la regla coincide con la mejor combinación en 11
+  ArtMesh101  (1,0,1)   vs (1,1,2)     0,0138 -> 0,0091
+  ArtMesh102  (0,0,1)   vs (1,1,2)     0,0783 -> 0,0065
+  ArtMesh106  (0,0,0,1) vs (1,1,1,0)   0,0921 -> 0,0063
+```
+
+Los tres desacuerdos son exactamente los tres conocidos, y en los tres la regla se queda con el
+índice **0** donde el Core se comporta como el **1**. Es un solo patrón, no tres casualidades.
+
+Y ya hay oráculos en otras poses (generados con `dump.html?p=…`, verificados: 93 mallas cambian
+con `ParamAngleZ=±10`, 8 con `ParamEyeBallX=1`). Eso permite medir la regla **en varias poses** y
+no sólo en reposo, que es donde estaba el techo de todos los experimentos anteriores.
