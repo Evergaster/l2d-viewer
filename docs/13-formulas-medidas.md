@@ -484,3 +484,31 @@ oráculo se mueve 0,0133 con `AngleZ=10` frente a 0,0067 de un paso de keyform.
 **Siguiente paso real:** reescribir el evaluador de `ArtMesh63` **una sola vez**, en un script
 único que sirva para las dos comprobaciones (error y conteo de fuera-de-dominio), y volver a medir
 desde ahí. Con dos implementaciones distintas de lo mismo no se puede concluir nada.
+
+### 5.14 Evaluador único: `tools/deform-eval.py` (§5.12 queda descartada del todo)
+
+Se unificó la lógica en **un solo** archivo, con autocomprobación: en reposo, `ArtMesh63` con la
+combinación `(4,1,1,0,1,1)` da **6,3·10⁻⁶**. Si no diera eso, el error estaría en el evaluador y no
+en el modelo. Da eso, así que el evaluador es de fiar.
+
+Con ese único evaluador:
+
+| Medición | Resultado |
+|---|---|
+| reposo, combo conocido | 6,3·10⁻⁶ (exacto) — evaluador validado |
+| `AngleZ=10`, mismo combo | 0,01328 |
+| barrido de peso kf1→kf2 | 0,01328 → 0,00722 (w=1) y **ahí se queda** |
+| vértices fuera del dominio, cualquier w | **0 en los cuatro warps** |
+
+Dos conclusiones:
+
+1. **§5.12 queda descartada**: no hay recorte. La saturación es real pero no la causa el clip.
+2. La saturación significa que **el error máximo lo pone otro vértice**, uno cuyo error no depende
+   del peso de `Rotation2`: hay **más de un eslabón mal** en esa cadena al mover el parámetro. La
+   búsqueda exhaustiva ya lo insinuaba: el mejor combo en `AngleZ=10` era `(8, 0, 2, 1, 2, 2)`
+   —cambian cinco eslabones, no uno— con error 0,0031.
+
+**Siguiente paso, ahora sí preciso:** un script que, con este evaluador único, busque el mejor combo
+en `AngleZ=10` **eslabón por eslabón** (fijando los demás y viendo cuál mejora más), para separar
+cuántos están mal y en qué orden. El montaje ya está validado contra el reposo, así que cualquier
+diferencia es del modelo, no del instrumento.
