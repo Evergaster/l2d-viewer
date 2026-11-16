@@ -512,3 +512,29 @@ Dos conclusiones:
 en `AngleZ=10` **eslabón por eslabón** (fijando los demás y viendo cuál mejora más), para separar
 cuántos están mal y en qué orden. El montaje ya está validado contra el reposo, así que cualquier
 diferencia es del modelo, no del instrumento.
+
+### 5.15 El diagnóstico final: el modelo **atenúa** el efecto del parámetro
+
+Con el evaluador único, para `ArtMesh63` en `AngleZ=10` (y `Rotation2` en kf2, el que pide su banda):
+
+- **Los 33 vértices** están mal, con error mediano **0,00615** y máximo 0,00722. No es un vértice
+  raro: es toda la malla desplazada de menos.
+- El desplazamiento que produce un paso de keyform de `Rotation2` es **0,0067** y el oráculo se
+  mueve **0,0133** — dos pasos. Con kf2 el modelo da uno; el residuo es exactamente el otro.
+- Perturbar el rectángulo de cada warp del dominio un ±2 % no lo arregla (el error se queda en
+  0,0066–0,0072 o empeora), y el barrido de peso se satura en 0,00722 aunque se extrapole a 2,5.
+
+**Por qué se satura, que es lo que faltaba entender:** `Rotation2` produce una traslación de
+0,0067 que entra al warp siguiente como coordenada relativa (`uv`): 0,0067 / 0,569 · 5 ≈ **0,059
+celdas**. Un desplazamiento de la entrada de ese tamaño, pasado por una rejilla que en esa zona es
+casi rígida, sale **atenuado** en la salida. Por eso duplicar el peso no duplica la respuesta: el
+modelo ya no transmite el movimiento con la ganancia correcta.
+
+Los únicos grados de libertad que quedan son los **rectángulos de dominio** de los warps, y se
+calibraron para clavar la **pose de reposo** — que se clava igual con una ganancia equivocada,
+porque en reposo el parámetro no se mueve.
+
+**Siguiente paso, y es el bueno:** recalibrar los dominios de `Warp37/Warp/Warp0/Warp1` con el
+**delta entre poses** como objetivo (`modelo(10) − modelo(0)` contra `oráculo(10) − oráculo(0)`), no
+con la pose absoluta. El delta cancela el offset estático y mide exactamente la ganancia, que es lo
+que está mal. Todo el montaje para hacerlo está en `tools/deform-eval.py` y en los tres oráculos.
