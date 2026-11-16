@@ -153,3 +153,37 @@ Ese factor es el dato que falta para generalizar.
 3. Con la regla, la fórmula del warp queda cerrada y se puede implementar en `crates/pose`.
 
 Los tres dominios descartados están medidos, no supuestos: no hace falta volver a probarlos.
+
+---
+
+## 5. Calibración de los 50 dominios (16 nov, tercera tanda)
+
+`tools/deform-calibrar.py` resuelve el rectángulo de dominio de **todos** los warps por descenso
+por bloques: parte de «cuadrado unidad» en los 50, y en cada ronda vuelve a medir cada warp
+usando las estimaciones actuales de los demás (prefijo hacia adelante, sufijo invertido). No
+adivina la regla: mide los rectángulos que hacen que la cadena reproduzca el Core.
+
+| Ronda | Mallas con error < 1e-3 | Mediana | Máximo |
+|---|---|---|---|
+| inicio (todo cuadrado unidad) | 12/134 | 3,3·10⁻² | 1,2·10⁻¹ |
+| 1 | 78/134 | 5,6·10⁻⁴ | 1,2·10⁻¹ |
+| 2–6 (estable) | 77/134 | **3,0·10⁻⁴** | 1,2·10⁻¹ |
+
+La mediana ya está en **0,9 px** (ppu = 2976), por debajo del criterio de 2 px de `docs/10` §8.
+76 mallas cumplen el criterio estricto. Los 12 dominios impresos muestran la estructura:
+
+- La mayoría de los warps calibran en **cuadrado unidad** (0, 1) — los que ya funcionaban.
+- `Warp1` (raíz): `x0=+0.2136 y0=+0.0719 w=0.5690 h=0.7982`.
+- `Warp47..Warp50`: `w=1.7576 h=1.2529` — y **1.7576 = 1/0.5689**, el recíproco del ancho de
+  `Warp1`. No es casualidad: los rectángulos de la familia están relacionados por las cajas de
+  las rejillas, pero el cociente contra mi «keyform más regular» sale disperso (0,001 a 17,7),
+  así que la heurística de rejilla de reposo **no** sirve para deducir la regla.
+
+### Los dos fallos que quedan, con nombre
+
+1. **`ArtMesh102` y `ArtMesh106`** (cadenas de sólo rotaciones, error 0,078 y 0,092): es la
+   excepción de selección de keyform que ya había detectado la búsqueda — banda 7 de
+   `Rotation21/22/23`, donde el Core usa el índice 1 y la regla del producto da 0.
+2. **Cadenas largas que pasan por `Warp1`** (`ArtMesh88`, `ArtMesh83`, `ArtMesh91`, `ArtMesh75`,
+   `ArtMesh80`, 0,06–0,07): cinco a ocho deformadores encadenados; el error se acumula o el
+   dominio de un eslabón intermedio no es afín. Es el siguiente objetivo.
