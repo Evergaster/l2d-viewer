@@ -744,3 +744,36 @@ el origen — que es justo el síntoma (el resultado se vuelve casi constante y 
 —o, lo que es lo mismo, si las coordenadas de la entrada de una rotación están en el espacio del
 padre y no en unidades. Es medible con el oráculo: es la misma pregunta que se resolvió para el
 warp, ahora en la frontera inversa (warp → rotación).
+
+### 5.25 Aislada la rotación entre warps: la fórmula es exacta, el desfase es del warp
+
+Para `ArtMesh67` (`Warp40 → Rotation2 → Warp → Warp0 → Warp1`) se aisló `Rotation2` invirtiendo
+numéricamente el sufijo de warps sobre el oráculo. Después se ajustó la afinidad de su entrada a la
+salida requerida:
+
+| | Valor |
+|---|---|
+| Traslación ajustada | **(0,494185, 0,314391)** |
+| `origin` del keyform | **(0,494187, 0,314392)** |
+| Residuo del ajuste | **8,9·10⁻⁶** |
+| Matriz ajustada | `diag(0,000591, 0,000421)` |
+| `scale` del keyform | 0,000336 |
+
+Dos conclusiones firmes:
+
+1. **La fórmula de rotación es exacta.** La traslación del ajuste coincide con el `origin` del
+   keyform al sexto decimal y el residuo es 9·10⁻⁶: `out = scale·p + origin` describe lo que hizo el
+   Core. No hay pivote, ni signo, ni reflexión escondidos.
+2. **El desfase es por eje y viene del warp.** La escala ajustada supera la del keyform en factores
+   **1,759 (x)** y **1,253 (y)** — que son los recíprocos de los dos lados del rectángulo calibrado
+   de `Warp1` (1/0,5689 y 1/0,798). O sea: mi inversión del sufijo estaba mal exactamente por el
+   dominio de `Warp1`, no por la rotación.
+
+Y el intento directo de derivar ese dominio como **caja de la rejilla elegida** falla en grande
+(3/134, mediana 0,667): no es la caja de la rejilla.
+
+**Con esto, lo que queda abierto es una sola cosa y está bien delimitada:** de dónde sale el
+rectángulo de dominio de `Warp1` (y de `Warp47..50`), que la calibración mide como 0,569×0,798 en
+(0,214, 0,072) y 1,7576×1,2529 respectivamente. Todas las demás piezas del motor están verificadas
+por separado: rotación exacta, warp exacto en 4 eslabones, cinco warps encadenados exactos,
+composición hasta 4 eslabones exacta, selección de keyform 11/14 en cadenas cortas.
