@@ -111,3 +111,45 @@ python3 tools/deform-buscar.py --sin-busqueda      # sólo la regla de keyform (
 python3 tools/deform-buscar.py --json /tmp/t.json  # tabla por malla en JSON
 python3 tools/deform-buscar.py --modelo …/Wanko.moc3 --oraculo models/samples/wanko.oracle.json
 ```
+
+---
+
+## 4. Warp aislado: la entrada se recupera y es afín (16 nov, segunda tanda)
+
+`tools/warp-aislado.py` aísla el warp: aplica la parte de la cadena que va **antes** de él y
+**invierte** la que va después (sólo rotaciones, ya validadas). Quedan pares reales
+`(entrada a, salida b)` medidos contra el Core: **129 casos** en Hiyori.
+
+Con esos pares se recupera el `(u,v)` que usó el Core invirtiendo la rejilla destino sobre `b`
+(Newton con Jacobiano numérico: `bilineal(rej, uv) = b`). Resultado medido:
+
+| Hipótesis de dominio | Casos con error < 1e-3 |
+|---|---|
+| `u = 5·a`, `v = 5·a` (cuadrado unidad) | **8/129** (mediana 0,034) |
+| caja de la entrada (bbox) | 0/129 (mediana 0,72) |
+| rejilla de reposo invertida | 0/129 (mediana 0,72) |
+| **`uv = A·a + c` (afín, ajustado)** | **109/129 con residuo < 1e-3** |
+
+El `(u,v)` que usa el Core **es afín en la entrada** y el mismo para todas las mallas que cuelgan
+del mismo warp. Para `Warp1` (el warp raíz de Hiyori):
+
+```
+A = [[8.789, ~0], [~0, 6.266]]      c = (-1.876, -0.4516)
+⇒ rectángulo del dominio:  x ∈ [0.2135, 0.7824]  (ancho 0.5689)
+                           y ∈ [0.0721, 0.8700]  (alto  0.7980)
+```
+
+Comparado con la rejilla de reposo de ese warp (`kf` más regular: ancho 0.7346, alto 1.0305):
+el rectángulo del dominio es **0,774 × la caja de la rejilla en los dos ejes**, con una traslación.
+Ese factor es el dato que falta para generalizar.
+
+### Lo que queda, con el camino corto
+
+1. Medir `(A, c)` para **todos** los warps (se puede: un warp también se invierte numéricamente con
+   la misma inversión de rejilla), no sólo para el warp raíz.
+2. Ver a qué dato del archivo corresponde ese rectángulo — candidatos, en orden de probabilidad:
+   caja de los hijos en su espacio, rejilla de reposo escalada por un factor fijo, o el rect que se
+   deduce de las claves de la banda.
+3. Con la regla, la fórmula del warp queda cerrada y se puede implementar en `crates/pose`.
+
+Los tres dominios descartados están medidos, no supuestos: no hace falta volver a probarlos.
