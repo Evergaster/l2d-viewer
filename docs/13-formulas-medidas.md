@@ -714,3 +714,33 @@ la malla (coordenadas ya en `[0,1]²`); del 5.º en adelante hay que convertir l
 «warp → warp» y ajustar con el oráculo la conversión de esa frontera (una afinidad de 6 parámetros).
 Es un sistema lineal con decenas de ecuaciones y 6 incógnitas: si tiene solución exacta, la regla
 está ahí y se lee en los coeficientes.
+
+### 5.24 La hipótesis «warp→warp» era falsa: cinco warps seguidos componen exactos
+
+Probadas las tres cadenas de 5 eslabones, todas terminadas en `Warp → Warp0 → Warp1`:
+
+| Malla | Cadena | Mejor error (dominio `[0,1]²`, sin rectángulos) |
+|---|---|---|
+| `ArtMesh100` | **W W W W W** (`Warp51 → Warp46 → Warp → Warp0 → Warp1`) | **0,00000** (exacta) |
+| `ArtMesh67` | W R W W W (`Warp40 → Rotation2 → …`) | 0,01057 |
+| `ArtMesh43` | R R W W W (`Rotation1 → Rotation2 → …`) | falla |
+
+- **Cinco warps consecutivos componen exacto.** La frontera warp→warp no necesita conversión: la
+  hipótesis de §5.23 queda descartada con una medición.
+- Las dos que fallan comparten **`Rotation2` en medio**. Y no es que `Rotation2` esté mal: en la
+  cadena de 6 de `ArtMesh63` funciona bien (§5.22). Lo que falla es `Rotation2` cuando su entrada
+  viene de un **warp** (`ArtMesh67`: `Warp40 → Rotation2`) o cuando va en medio de dos warps.
+
+Ajustar una escala+traslación (2 parámetros de escala, 2 de desplazamiento) en esa frontera **no
+mejora nada** (0,010568 → 0,010568, y la escala se queda en 1,003). No es una afinidad: es otra cosa.
+
+**El dato que orienta:** `Rotation2` tiene `scale = 0,000336 = 1/2976` (exactamente `1/ppu`) y
+`origin ≈ 0,49`. Esa escala solo tiene sentido en una dirección: convierte unidades del modelo a
+coordenadas normalizadas. Aplicada a un punto que **ya** viene normalizado, aplasta la cadena contra
+el origen — que es justo el síntoma (el resultado se vuelve casi constante y el error se queda en
+~0,01).
+
+**Siguiente paso:** determinar en qué dirección se aplica esa escala según de dónde venga la entrada
+—o, lo que es lo mismo, si las coordenadas de la entrada de una rotación están en el espacio del
+padre y no en unidades. Es medible con el oráculo: es la misma pregunta que se resolvió para el
+warp, ahora en la frontera inversa (warp → rotación).
