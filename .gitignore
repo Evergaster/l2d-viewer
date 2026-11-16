@@ -19,3 +19,7 @@ models/
 # salidas del demo
 out/*.png
 out/*.gif
+
+# caché de python
+__pycache__/
+*.pyc
