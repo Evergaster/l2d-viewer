@@ -38,7 +38,14 @@ def main():
     ap.add_argument("--max-largo", type=int, default=4,
                     help="sólo cadenas de hasta N deformadores (la búsqueda es exponencial)")
     ap.add_argument("--umbral", type=float, default=1e-3)
+    ap.add_argument("--pose", default="",
+                    help="valores de parámetro de la pose del oráculo: ParamAngleZ=10,ParamEyeBallX=1")
     args = ap.parse_args()
+
+    pose = {}
+    for trozo in filter(None, (t.strip() for t in args.pose.split(","))):
+        nombre, _, valor = trozo.partition("=")
+        pose[nombre.strip()] = float(valor)
 
     d = MOD.leer_moc3(args.modelo)
     mod = MOD.Modelo(d, json.load(open(args.oraculo)))
@@ -68,6 +75,31 @@ def main():
         return MOD.bilineal(rej, uv)
 
     regla_ok = medidas = 0
+
+    def indice_banda(banda, n_kf):
+        """Índice de keyform por radix mixto (primer parámetro el más significativo)."""
+        lista = bnd.claves_de(banda)
+        if not lista:
+            return 0
+        idx = 0
+        for param, claves in lista:
+            claves = np.asarray(claves, dtype=float)
+            nombre = d["parameter.ids"][param] if param is not None else None
+            if nombre in pose:
+                v = pose[nombre]
+            else:
+                v = float(bnd.defaults[param]) if param is not None else 0.0
+            if len(claves) <= 1:
+                pos = 0
+            elif v <= claves[0]:
+                pos = 0
+            elif v >= claves[-1]:
+                pos = len(claves) - 1
+            else:
+                pos = int(np.searchsorted(claves, v) - 1)
+            idx = idx * len(claves) + pos
+        return min(idx, max(n_kf - 1, 0))
+
     print(f"{'malla':>12} {'n':>2} {'regla':>12} {'mejor':>12} {'err_regla':>10} {'err_mejor':>10}")
     for m in range(mod.n_malla):
         cadena = mod.cadenas[m]
@@ -79,7 +111,7 @@ def main():
         for i in cadena:
             propio = (d["warp_deformer.keyform_binding_band_indices"] if mod.tipos[i] == 0
                       else d["rotation_deformer.keyform_binding_band_indices"])
-            regla.append(bnd.indice(int(propio[int(mod.spec[i])]), int(mod.n_kf[i])))
+            regla.append(indice_banda(int(propio[int(mod.spec[i])]), int(mod.n_kf[i])))
         p0 = mod.puntos_malla(m, kf_malla[m])
 
         def err(combo):

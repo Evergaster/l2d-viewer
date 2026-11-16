@@ -311,3 +311,28 @@ Los tres desacuerdos son exactamente los tres conocidos, y en los tres la regla 
 Y ya hay oráculos en otras poses (generados con `dump.html?p=…`, verificados: 93 mallas cambian
 con `ParamAngleZ=±10`, 8 con `ParamEyeBallX=1`). Eso permite medir la regla **en varias poses** y
 no sólo en reposo, que es donde estaba el techo de todos los experimentos anteriores.
+
+### 5.7 Medido en tres poses: la regla falla igual, y el residuo es de otra cosa
+
+Con `tools/keyform-medir.py --pose …` contra los tres oráculos (reposo, `ParamAngleZ=10`,
+`ParamEyeBallX=1`), sobre las 14 cadenas cortas medibles:
+
+| Oráculo | Regla = mejor |
+|---|---|
+| reposo | 11/14 |
+| `ParamAngleZ=10` | **1/14** |
+| `ParamEyeBallX=1` | 2/14 |
+
+Dos conclusiones que no se podían sacar con una sola pose:
+
+1. **La regla de selección no se sostiene al mover el parámetro.** En `ParamAngleZ=10`, para el
+   deformador cuya banda tiene claves `[-10, 0, 10]`, la regla predice el índice **2** y el Core se
+   comporta como el **1** (`ArtMesh103`: 0,0025 con la regla frente a **0,00001** con el 1;
+   `ArtMesh104`: 0,0025 frente a **0,00000**). O sea, el índice que gana **no cambia** al pasar de
+   0 a 10 — la selección no va por donde la regla cree.
+2. **El residuo de `ArtMesh101/102/106` es independiente de la pose** (0,0091 / 0,0065 / 0,0063 en
+   los tres oráculos). No es selección de keyform: es un error por vértice que hay que buscar en la
+   geometría de esas tres cadenas.
+
+Y un dato que anima: `ArtMesh104` llega a **0,00000** y `ArtMesh103/105` a 0,00001 con la
+combinación correcta. El modelo **puede** ser exacto; lo que está mal es cómo se elige el keyform.
