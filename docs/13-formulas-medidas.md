@@ -685,3 +685,32 @@ eslabones es la que falta.
 calcular, con el oráculo, qué conversión entre ambos reproduce el resultado; luego con los tres
 primeros, y así. Ahí se ve la regla de conversión en vez de suponerla. Es el mismo método que
 funcionó con el warp aislado (`tools/warp-aislado.py`), aplicado a la frontera entre eslabones.
+
+### 5.23 ¿Hasta dónde compone bien? Hasta 4 eslabones. Se rompe en el 5.º
+
+Con dominio `[0,1]²` fijo y búsqueda **exhaustiva** de keyforms, agrupado por número de eslabones
+(sólo cadenas con ≤1 200 combinaciones, para que la búsqueda sea completa):
+
+| Eslabones | Exactas (< 1e-4) | Total | Peor error |
+|---|---|---|---|
+| 0 (sin deformador) | 1 | 1 | 0,00000 |
+| 3 | **4** | **4** | 0,00001 |
+| 4 | **9** | **9** | 0,00009 |
+| 5 | **1** | 3 | **0,01057** |
+
+Esto acota el problema con precisión que antes no había:
+
+- **La composición es correcta hasta 4 eslabones.** No es «el modelo está mal»: rotación, warp,
+  dominio `[0,1]²` y selección de keyform funcionan, y 13 mallas de 3 y 4 eslabones salen exactas
+  sin tocar nada.
+- **Se rompe en el 5.º.** A partir de ahí, ni la búsqueda exhaustiva encuentra combinación.
+
+Y el patrón estructural que hay que mirar: las cadenas de 5 o más son las primeras que contienen un
+**warp cuyo padre es otro warp**. Hasta 4 eslabones, cada warp recibe la salida de una rotación o de
+la malla (coordenadas ya en `[0,1]²`); del 5.º en adelante hay que convertir la salida de un warp
+—que está en el espacio del padre— a la entrada `[0,1]²` del siguiente.
+
+**Siguiente paso, quirúrgico:** tomar una de las dos cadenas de 5 que fallan, quedarse con el tramo
+«warp → warp» y ajustar con el oráculo la conversión de esa frontera (una afinidad de 6 parámetros).
+Es un sistema lineal con decenas de ecuaciones y 6 incógnitas: si tiene solución exacta, la regla
+está ahí y se lee en los coeficientes.
