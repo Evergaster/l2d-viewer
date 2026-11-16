@@ -38,6 +38,10 @@ def main():
     ap.add_argument("--max-largo", type=int, default=4,
                     help="sólo cadenas de hasta N deformadores (la búsqueda es exponencial)")
     ap.add_argument("--umbral", type=float, default=1e-3)
+    ap.add_argument("--radix-mixto", action="store_true",
+                    help="calcular el índice con producto de bandas en vez de usar Bindings")
+    ap.add_argument("--invertir", action="store_true",
+                    help="probar la convención de keyforms en orden de clave inverso")
     ap.add_argument("--pose", default="",
                     help="valores de parámetro de la pose del oráculo: ParamAngleZ=10,ParamEyeBallX=1")
     args = ap.parse_args()
@@ -77,7 +81,11 @@ def main():
     regla_ok = medidas = 0
 
     def indice_banda(banda, n_kf):
-        """Índice de keyform por radix mixto (primer parámetro el más significativo)."""
+        """Índice de keyform. Por defecto la regla de `Bindings` (la que mide mejor);
+        `--radix-mixto` usa el cálculo propio, y `--invertir` da la vuelta al índice."""
+        if not args.radix_mixto:
+            idx = bnd.indice(banda, n_kf)
+            return (max(n_kf - 1, 0) - idx) if args.invertir else idx
         lista = bnd.claves_de(banda)
         if not lista:
             return 0
@@ -98,7 +106,9 @@ def main():
             else:
                 pos = int(np.searchsorted(claves, v) - 1)
             idx = idx * len(claves) + pos
-        return min(idx, max(n_kf - 1, 0))
+        idx = min(idx, max(n_kf - 1, 0))
+        # convención alternativa: los keyforms de la banda están en orden de clave inverso
+        return (max(n_kf - 1, 0) - idx) if args.invertir else idx
 
     print(f"{'malla':>12} {'n':>2} {'regla':>12} {'mejor':>12} {'err_regla':>10} {'err_mejor':>10}")
     for m in range(mod.n_malla):

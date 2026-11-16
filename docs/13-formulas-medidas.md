@@ -336,3 +336,23 @@ Dos conclusiones que no se podían sacar con una sola pose:
 
 Y un dato que anima: `ArtMesh104` llega a **0,00000** y `ArtMesh103/105` a 0,00001 con la
 combinación correcta. El modelo **puede** ser exacto; lo que está mal es cómo se elige el keyform.
+
+### 5.8 Dos convenciones probadas y descartadas
+
+`tools/keyform-medir.py` gana `--radix-mixto` (cálculo propio del producto de bandas) y
+`--invertir` (índice al revés). Resultado en las tres poses, sobre 14 cadenas cortas:
+
+| Convención | reposo | AngleZ=10 | EyeBallX=1 |
+|---|---|---|---|
+| regla de `Bindings` (la de siempre) | **11/14** | 1/14 | 2/14 |
+| producto de bandas calculado a mano | 1/14 | 1/14 | 2/14 |
+| índice invertido | 2/14 | 2/14 | 1/14 |
+
+- El producto calculado a mano **empeora** (1/14): el orden de significancia de las bandas
+  multi-parámetro no es el que usé. La regla de `Bindings` sigue siendo la mejor conocida.
+- Invertir el índice no es una regla general: ayuda a las tres mallas de reposo y rompe otras.
+
+Queda por tanto **una sola cosa por descubrir**: cómo se ordenan los keyforms dentro de una banda
+cuando hay más de un parámetro. Es el único punto que separa 77/134 de la exactitud, y ahora hay
+con qué medirlo: tres oráculos, `keyform-medir.py` con búsqueda exhaustiva y 14 cadenas cortas de
+banco de pruebas.
