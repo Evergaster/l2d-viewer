@@ -1,0 +1,9 @@
+[package]
+name = "raster"
+description = "Rasterizador CPU de triángulos con UV y alpha blending, salida PNG"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+png = "0.17"

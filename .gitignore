@@ -1,0 +1,21 @@
+# builds
+target/
+**/*.rs.bk
+
+# modelos y texturas: nunca al repo (licencia de cada modelo)
+models/
+*.moc3
+*.model3.json
+*.physics3.json
+*.pose3.json
+*.exp3.json
+*.motion3.json
+*.cdi3.json
+*.userdata3.json
+*.png
+!docs/**/*.png
+!out/.gitkeep
+
+# salidas del demo
+out/*.png
+out/*.gif

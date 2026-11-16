@@ -1,0 +1,6 @@
+[package]
+name = "moc3"
+description = "Lector independiente del contenedor .moc3 (cabecera, canvas, tabla de secciones)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
