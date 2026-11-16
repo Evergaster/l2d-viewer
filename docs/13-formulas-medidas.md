@@ -441,3 +441,27 @@ Hipótesis viva y concreta para retomar: que para ese parámetro haya **dos** pa
 (extrapolación más allá de la última clave, o bien el mismo valor aplicado al deformador y a la
 malla), o bien que el índice correcto sea 2 con extrapolación desde kf1 (0,4942 + 2·0,0067 = 0,5076).
 Las dos son medibles con el mismo montaje: el delta entre poses cancela todo lo estático.
+
+### 5.12 El residuo de 0,0072 **satura**: son puntos clampeados, no un paso de keyform
+
+Probada la extrapolación en `Rotation2` (peso del tramo kf1→kf2 de 0 a 2,25):
+
+| peso | error |
+|---|---|
+| 0 | 0,013278 |
+| 0,5 | 0,009931 |
+| 1,0 | 0,007224 |
+| 1,25 → 2,25 | **0,007224 (idéntico)** |
+
+El error **deja de bajar y se queda clavado** en 0,007224 por mucho que se mueva el keyform. Eso no
+es un problema de selección: es la firma de **puntos que se salen de la rejilla y se recortan**
+(`bilineal` hace `clip` a [0, 5]). El warp deja de moverlos y el error se congela.
+
+Consecuencia: el dominio de los warps profundos (`Warp`, `Warp0`, `Warp1`) probablemente es **más
+grande** que el que se calibró, y la calibración lo compensó en reposo. Al mover el parámetro, los
+puntos se salen y el clip los mata. Eso explicaría, de una vez, por qué fallan **las cadenas
+largas** (6-12 eslabones) y no las cortas.
+
+**Siguiente paso, ya concreto:** medir cuántos vértices se salen del dominio en esas cadenas
+(contar `uv` fuera de [0,5] con y sin clip) y reabrir la calibración de los warps profundos como
+caja libre en vez de rectángulo rígido.
