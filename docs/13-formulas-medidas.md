@@ -261,3 +261,32 @@ es que el Core esté en otra pose.
 **Siguiente hilo, con dos candidatos concretos:** (a) que el orden de keyforms por banda no sea
 «orden de archivo» sino que haya que deducirlo de otro campo, y (b) que el residuo de ~0,006 venga
 del `reflect`/escala de un eslabón concreto — se puede aislar igual que se aisló el warp.
+
+### 5.4 La mezcla queda descartada también para la malla (medido)
+
+`tools/pose-mezcla.py` interpola las **posiciones de la malla** entre sus dos keyforms vecinos
+(que era la explicación natural del residuo no afín) y combina con rotaciones mezcladas:
+
+| Variante | < 1e-3 | < 2 px | Mediana | Máx |
+|---|---|---|---|---|
+| malla sin mezcla + rotación sin mezcla | **77** | 76 | 3,0e-4 | 1,2e-1 |
+| malla MEZCLADA + rotación sin mezcla | 30 | 30 | 9,7e-3 | 1,2e-1 |
+| malla MEZCLADA + rotación MEZCLADA | 30 | 30 | 9,7e-3 | 1,2e-1 |
+| malla sin mezcla + rotación MEZCLADA | 77 | 76 | 3,0e-4 | 1,2e-1 |
+
+Mezclar la malla **empeora 2,5×**. La hipótesis de la interpolación de keyforms queda descartada en
+los dos sitios donde podía estar (rotaciones y malla), con números. En `ArtMesh102` el error es
+idéntico bit a bit en las cuatro variantes: su banda no aporta peso, así que su residuo de 0,078
+viene de otro sitio.
+
+### 5.5 Cómo se cierra esto: oráculos con parámetros movidos
+
+El oráculo que se está usando es **una sola pose** (la de reposo), y eso pone un techo: con una
+pose no se puede distinguir «eligió el keyform 1» de «mezcló 0,3 del keyform 2».
+
+`models/samples/dump.html` acepta **overrides por URL** (`?p=ParamAngleZ=10,ParamEyeBallX=1`) y
+copia los valores por defecto antes de actualizar. Generar oráculos en 3–5 valores por parámetro
+—empezando por `ParamAngleZ`, `ParamEyeBallX` y los de las bandas de `Rotation21/22/23`— convierte
+la selección de keyform en algo **medible directamente**: se ve qué keyform (o qué mezcla) usa el
+Core para cada valor, sin inferirlo. Ese es el siguiente paso, y es barato: el navegador y el
+`http.server` ya están probados en este repo.
