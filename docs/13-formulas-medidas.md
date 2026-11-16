@@ -465,3 +465,22 @@ largas** (6-12 eslabones) y no las cortas.
 **Siguiente paso, ya concreto:** medir cuántos vértices se salen del dominio en esas cadenas
 (contar `uv` fuera de [0,5] con y sin clip) y reabrir la calibración de los warps profundos como
 caja libre en vez de rectángulo rígido.
+
+### 5.13 **§5.12 queda en duda: dos corridas no coinciden** (no usar como hecho)
+
+Al comprobar el recorte de §5.12 con un script aparte, la conclusión **no se sostiene**:
+
+- Con `w = 1,0 / 1,5 / 2,0`, **ningún** vértice de `ArtMesh63` sale del dominio en ninguno de los
+  cuatro warps (0/33 en los cuatro) y la salida **sí** se mueve (`bbox x` de `+0.0558` a `+0.0625`).
+- Pero la corrida de §5.12 daba error idéntico (0,007224) para todo `w ≥ 1`, como si no se moviera.
+
+Las dos no pueden ser ciertas: **una de las dos tiene un error de implementación** y no se resolvió
+cuál. Por eso §5.12 queda marcada como dudosa y no debe usarse como punto de partida.
+
+Lo que sí está firme de todo este tramo: el montaje de la cadena es correcto (6·10⁻⁶ en reposo con
+la combinación `(4,1,1,0,1,1)`), `Rotation2` solo traslada (`origin_x` 0,48671 → 0,50088), y el
+oráculo se mueve 0,0133 con `AngleZ=10` frente a 0,0067 de un paso de keyform.
+
+**Siguiente paso real:** reescribir el evaluador de `ArtMesh63` **una sola vez**, en un script
+único que sirva para las dos comprobaciones (error y conteo de fuera-de-dominio), y volver a medir
+desde ahí. Con dos implementaciones distintas de lo mismo no se puede concluir nada.
