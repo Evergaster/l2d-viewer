@@ -538,3 +538,42 @@ porque en reposo el parámetro no se mueve.
 **delta entre poses** como objetivo (`modelo(10) − modelo(0)` contra `oráculo(10) − oráculo(0)`), no
 con la pose absoluta. El delta cancela el offset estático y mide exactamente la ganancia, que es lo
 que está mal. Todo el montaje para hacerlo está en `tools/deform-eval.py` y en los tres oráculos.
+
+### 5.16 Recalibrar los dominios **no** arregla la ganancia (resultado negativo)
+
+`tools/deform-delta-calibrar.py` hace descenso por coordenadas sobre los 4 valores de cada
+rectángulo de warp, con el **delta entre poses** como objetivo:
+
+| | RMS del delta | delta < 1e-3 | reposo < 1e-3 |
+|---|---|---|---|
+| inicio (dominios calibrados en reposo) | 0,010848 | 3/134 | **77/134** |
+| vuelta 1 | 0,010228 | 3/134 | 3/134 |
+| vuelta 2 | 0,009646 | 3/134 | 3/134 |
+
+El optimizador **cambia 27 valores** y gana un 11 % de RMS en el delta… a costa de **destruir por
+completo** la pose de reposo (77 → 3). Es decir: con esta estructura, los rectángulos no pueden
+satisfacer las dos poses a la vez.
+
+Conclusión importante y ahorra tiempo: **el problema no es la calibración, es la estructura.** El
+modelo «warp = bilineal sobre un rectángulo normalizado» tiene suficientes grados de libertad para
+clavar **una** pose, y los usa para eso; no tiene los correctos para describir cómo responde al
+parámetro. Recalibrar mejor no lo va a arreglar.
+
+### 5.17 Qué haría falta (para la siguiente sesión, no es más ajuste numérico)
+
+Hipótesis estructurales que quedan vivas, en orden de probabilidad:
+
+1. **El espacio de entrada del warp no es `[0,1]²` normalizado por un rectángulo**, sino el que
+   define su **rejilla base** (la de reposo) — lo que `docs/12` §3 ya apuntaba como el «layout del
+   pool». Se descartó invirtiendo la rejilla, pero en aquella prueba el resto de la cadena usaba los
+   rectángulos: hay que probarlo con la cadena entera construida sobre esa hipótesis.
+2. **El warp puede no ser bilineal por celda** cuando la rejilla no es regular: las rejillas de este
+   modelo son *irregulares* (se midió la regularidad por keyform en `deform-buscar.py`). Una B-spline
+   sobre rejilla irregular es la otra candidata seria.
+3. Consultar la **especificación de OpenL2D** del formato (citada en `docs/03`, licencia libre): dice
+   cómo se interpretan las rejillas. Leer la spec no es copiar código, y la fórmula del warp es
+   justo lo que debería estar ahí.
+
+Lo que ya está descartado con números (no repetir): mezcla de keyforms (rotación y malla), pivote,
+ángulo negado, reflejos, escala en el origen, orden raíz→hoja, radix calculado a mano, índice
+invertido, recorte por dominio, y recalibrar los rectángulos.
