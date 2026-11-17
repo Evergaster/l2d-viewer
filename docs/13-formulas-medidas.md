@@ -777,3 +777,37 @@ rectángulo de dominio de `Warp1` (y de `Warp47..50`), que la calibración mide 
 (0,214, 0,072) y 1,7576×1,2529 respectivamente. Todas las demás piezas del motor están verificadas
 por separado: rotación exacta, warp exacto en 4 eslabones, cinco warps encadenados exactos,
 composición hasta 4 eslabones exacta, selección de keyform 11/14 en cadenas cortas.
+
+### 5.26 La jaula como dominio se probó y **no** funciona; y las rejillas no viven en el mismo espacio (17 nov)
+
+`tools/deform-ffd.py` implementa la lectura de *free-form deformation* que faltaba por probar con la
+cadena entera: el warp no normaliza por un rectángulo, **invierte su propia rejilla neutra** (el
+keyform de la pose por defecto) para obtener `(u,v)` y luego evalúa con el keyform seleccionado.
+Resultado con la combinación de la regla, en las 133 mallas medibles:
+
+| Hipótesis de dominio | Mallas < 1e-3 | Mediana |
+|---|---|---|
+| `[0,1]²` (`u = 5p`, lo de siempre) | 12/133 | 3,3·10⁻² |
+| **invertir la rejilla neutra (FFD)** | **0/133** | **6,7·10⁻¹** |
+
+Descartada, y con un dato que ordena el problema: **ninguna de las 50 jaulas es el cuadrado unidad**
+(la desviación mínima respecto de `[0,1]²` es grande en todas) y, sin embargo, `u = 5p` es exacto en
+las cadenas cortas. Es decir: el dominio **no** es la rejilla neutra del propio warp.
+
+Y el dato nuevo, medido imprimiendo las jaulas de una misma cadena (`ArtMesh63`):
+
+| Eslabón | Bbox de la rejilla (kf de reposo) | Espacio |
+|---|---|---|
+| `Warp37` (hoja) | x[+86,4 +435,5] y[−810,5 −451,0] | unidades grandes |
+| `Warp` | x[+0,055 +0,945] y[+0,055 +0,945] | normalizado |
+| `Warp0` | x[+0,065 +0,935] y[+0,065 +0,935] | normalizado |
+| `Warp1` (raíz) | x[−0,367 +0,367] y[−0,714 +0,316] | normalizado, descentrado |
+
+Las rejillas **no comparten espacio**: unas están en unidades (×2976 respecto de las normalizadas) y
+otras en espacio normalizado, y la rotación que va entre medias es la que convierte de uno a otro
+(`escala = 1/ppu`). Por eso ninguna regla de «un rectángulo por warp» puede funcionar sin saber **en
+qué espacio está la entrada de cada warp**, que es exactamente la pregunta abierta de §5.21 — ahora
+con evidencia de por qué lleva seis sesiones sin cerrarse.
+
+El instrumento para seguir está ya en Rust: `l2d pose --malla <id>` imprime la cadena, el keyform de
+cada eslabón y el bbox tras cada paso (`docs/15`).

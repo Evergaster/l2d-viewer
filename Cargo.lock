@@ -71,6 +71,7 @@ dependencies = [
  "edit",
  "moc3",
  "model3",
+ "pose",
  "raster",
  "serde_json",
 ]
@@ -131,6 +132,7 @@ name = "pose"
 version = "0.1.0"
 dependencies = [
  "moc3",
+ "serde_json",
 ]
 
 [[package]]

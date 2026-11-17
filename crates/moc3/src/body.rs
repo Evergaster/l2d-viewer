@@ -456,6 +456,22 @@ impl Moc3 {
         read_ids(data, offset, count)
     }
 
+    /// Sección de bytes (`Bool32` del formato): un `bool` por elemento.
+    pub fn read_bool_section(&self, name: &str) -> Result<Vec<bool>, Error> {
+        let (data, offset) = self.section_data(name)?;
+        let count = self.section_count(name);
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if offset + count > data.len() {
+            return Err(Error::TooShort {
+                need: offset + count,
+                have: data.len(),
+            });
+        }
+        Ok(data[offset..offset + count].iter().map(|b| *b != 0).collect())
+    }
+
     fn section_count(&self, name: &str) -> usize {
         LAYOUT
             .iter()

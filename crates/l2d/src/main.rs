@@ -2,6 +2,7 @@
 //!
 //!   l2d inspect <archivo.moc3>     cabecera, canvas, conteos y secciones
 //!   l2d model3  <archivo.json>     manifiesto del modelo
+//!   l2d pose    <archivo.moc3>     evalúa la pose con el motor propio (opcional --oraculo)
 //!   l2d demo    [salida.png]       rasteriza una malla deformada (prueba del pipeline)
 
 use std::error::Error;
@@ -41,6 +42,7 @@ fn main() {
             }
             _ => Err("uso: l2d render <modelo.moc3> <textura.png> <salida.png> [escala]".into()),
         },
+        Some("pose") => pose_cmd(&args[1..]),
         Some("edit") => match (args.get(1), args.get(2)) {
             (Some(l2d), Some(moc)) => edit_cmd(l2d, moc),
             _ => Err("uso: l2d edit <archivo.l2d> <modelo.moc3>".into()),
@@ -67,6 +69,8 @@ fn usage() -> String {
      l2d params  <archivo.moc3>            parámetros: id, mínimo, máximo, defecto\n  \
      l2d edit    <archivo.l2d> <modelo.moc3>\n                                        \
      valida el modelo editado contra su .moc3 (huella, mallas, vértices)\n  \
+     l2d pose    <modelo.moc3> [--oraculo dump.json] [--malla ID]\n  \
+     evalúa la pose con el motor propio y mide la desviación\n  \
      l2d oracle  <dump.json> <tex_dir> <salida.png> [zoom]\n                                        \
      render con geometría del Core oficial\n  \
      l2d model3  <archivo.model3.json>     manifiesto del modelo\n  \
@@ -77,6 +81,214 @@ fn usage() -> String {
      variables:\n  \
      L2D_KF=primero|centro|mediana         elección del keyform de reposo (por defecto mediana)"
         .to_string()
+}
+
+// ---------------------------------------------------------------- pose
+
+/// Evalúa una pose con el motor propio (`crates/pose`) y, si se le pasa un volcado del
+/// Core, mide la desviación por malla.
+///
+/// Es el marcador del visor independiente: hoy acierta las cadenas cortas y falla las que
+/// pasan de una rotación a un warp (`docs/13` §5.21). El número que imprime es el que hay.
+fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let Some(ruta) = args.first() else {
+        return Err("uso: l2d pose <modelo.moc3> [--oraculo dump.json] [--malla ID] [--param Nombre=valor]".into());
+    };
+    let mut oraculo: Option<String> = None;
+    let mut solo_malla: Option<String> = None;
+    let mut valores: Vec<(String, f32)> = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--oraculo" => {
+                oraculo = args.get(i + 1).cloned();
+                i += 2;
+            }
+            "--malla" => {
+                solo_malla = args.get(i + 1).cloned();
+                i += 2;
+            }
+            "--param" => {
+                if let Some(par) = args.get(i + 1) {
+                    let (nombre, valor) = par
+                        .split_once('=')
+                        .ok_or("--param espera Nombre=valor")?;
+                    valores.push((nombre.to_string(), valor.parse::<f32>()?));
+                }
+                i += 2;
+            }
+            otro => return Err(format!("opción desconocida: {otro}").into()),
+        }
+    }
+
+    let bytes = std::fs::read(ruta)?;
+    let moc = moc3::Moc3::parse(&bytes)?;
+    let modelo = pose::cargar(&moc);
+    let bnd = pose::Bindings::cargar(&moc);
+
+    let mut pose_valores = bnd.defectos.clone();
+    for (nombre, valor) in &valores {
+        let p = bnd
+            .parametros
+            .iter()
+            .position(|x| x == nombre)
+            .ok_or_else(|| format!("parámetro «{nombre}» no existe en el modelo"))?;
+        pose_valores[p] = *valor;
+    }
+    let sel = pose::Seleccion::con_valores(&modelo, &bnd, &pose_valores);
+
+    println!("modelo       {ruta}");
+    println!(
+        "pose         {} parámetros{}",
+        pose_valores.len(),
+        if valores.is_empty() { " (por defecto)" } else { "" }
+    );
+    for (nombre, valor) in &valores {
+        println!("  {nombre:<20} {valor}");
+    }
+
+    // volcado del Core: id → vértices
+    let mut esperado: std::collections::HashMap<String, Vec<[f32; 2]>> =
+        std::collections::HashMap::new();
+    if let Some(r) = &oraculo {
+        let texto = std::fs::read_to_string(r)?;
+        let json: serde_json::Value = serde_json::from_str(&texto)?;
+        let arr = json
+            .get("drawables")
+            .and_then(|d| d.as_array())
+            .ok_or("el volcado no trae «drawables»")?;
+        for d in arr {
+            let id = d.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let pos = d
+                .get("pos")
+                .and_then(|x| x.as_array())
+                .map(|v| {
+                    v.chunks(2)
+                        .filter(|c| c.len() == 2)
+                        .map(|c| [c[0].as_f64().unwrap_or(0.0) as f32, c[1].as_f64().unwrap_or(0.0) as f32])
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            esperado.insert(id, pos);
+        }
+        println!("oráculo      {r} ({} drawables)", esperado.len());
+    }
+
+    let mut filas: Vec<(String, usize, f32)> = Vec::new();
+    let mut detalle: Option<(String, Vec<[f32; 2]>)> = None;
+    for malla in &modelo.mallas {
+        if let Some(solo) = &solo_malla {
+            if &malla.id != solo {
+                continue;
+            }
+        }
+        let Some(p) = pose::evaluar(&modelo, &sel, malla.indice) else {
+            continue;
+        };
+        if let Some(o) = esperado.get(&malla.id) {
+            if o.len() != p.len() {
+                eprintln!(
+                    "  {}: el oráculo trae {} vértices y el modelo {}",
+                    malla.id,
+                    o.len(),
+                    p.len()
+                );
+                continue;
+            }
+            // misma métrica que los experimentos de docs/13: la mayor diferencia por
+            // coordenada (Chebyshev), para que los números sean comparables entre sí
+            let e = p
+                .iter()
+                .zip(o.iter())
+                .map(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()))
+                .fold(0.0f32, f32::max);
+            filas.push((malla.id.clone(), modelo.cadena(malla.indice).len(), e));
+            if solo_malla.is_some() {
+                detalle = Some((malla.id.clone(), p));
+            }
+        } else if solo_malla.is_some() {
+            detalle = Some((malla.id.clone(), p));
+        }
+    }
+
+    if let Some((id, p)) = &detalle {
+        // diagnóstico: qué keyform usa cada eslabón y con qué campos
+        if let Some(m) = modelo.mallas.iter().find(|x| &x.id == id) {
+            println!("\n{id}: keyform de malla {} de {}", sel.malla[m.indice], m.keyform_count);
+            for d in modelo.cadena(m.indice) {
+                let def = &modelo.deformadores[d];
+                let k = sel.deformador[d];
+                match def.tipo {
+                    pose::Tipo::Rotacion => {
+                        let r = &modelo.rotaciones[def.specific];
+                        let c = &modelo.rot_campos[r.keyform_begin + k];
+                        println!(
+                            "  {:<12} rotación  kf {}/{}  ángulo {:+.2}  escala {:.6}  origen [{:+.4}, {:+.4}]  refl {}{}",
+                            def.id, k, r.keyform_count, c.angulo, c.escala,
+                            c.origen[0], c.origen[1],
+                            if c.reflect_x { "x" } else { "" },
+                            if c.reflect_y { "y" } else { "" }
+                        );
+                    }
+                    pose::Tipo::Warp => {
+                        let w = &modelo.warps[def.specific];
+                        println!("  {:<12} warp      kf {}/{}  rejilla {}×{} celdas",
+                            def.id, k, w.keyform_count, w.filas, w.columnas);
+                    }
+                }
+            }
+        }
+        if let Some(m) = modelo.mallas.iter().find(|x| &x.id == id) {
+            if let Some(pasos) = pose::evaluar_pasos(&modelo, &sel, m.indice) {
+                println!("\n  paso a paso (bbox en el espacio del Core):");
+                for (nombre, v) in pasos {
+                    let (mut x0, mut x1) = (f32::MAX, f32::MIN);
+                    let (mut y0, mut y1) = (f32::MAX, f32::MIN);
+                    for q in &v {
+                        x0 = x0.min(q[0]);
+                        x1 = x1.max(q[0]);
+                        y0 = y0.min(q[1]);
+                        y1 = y1.max(q[1]);
+                    }
+                    println!("    {nombre:<20} x[{x0:+.4} {x1:+.4}] y[{y0:+.4} {y1:+.4}]");
+                }
+            }
+        }
+        println!("\n{id}: {} vértices en el espacio del Core", p.len());
+        for v in p.iter().take(6) {
+            println!("  [{:+.5}, {:+.5}]", v[0], v[1]);
+        }
+    }
+
+    if esperado.is_empty() {
+        println!("\n(sin oráculo: no hay con qué comparar; pasa --oraculo dump.json)");
+        return Ok(());
+    }
+    if filas.is_empty() {
+        return Err("ninguna malla comparable con el oráculo".into());
+    }
+
+    filas.sort_by(|a, b| a.2.total_cmp(&b.2));
+    let exactas = filas.iter().filter(|f| f.2 < 1e-3).count();
+    let dos_px = filas.iter().filter(|f| f.2 < 6.7e-4).count();
+    let mediana = filas[filas.len() / 2].2;
+    println!(
+        "\nmallas < 1e-3: {}/{}   < 6,7e-4 (2 px): {}   mediana {:.2e}   máximo {:.4}",
+        exactas,
+        filas.len(),
+        dos_px,
+        mediana,
+        filas.last().map(|f| f.2).unwrap_or(0.0)
+    );
+    println!("\n{} mejores:", 12.min(filas.len()));
+    for (id, eslabones, e) in filas.iter().take(12) {
+        println!("  {id:<12} eslabones={eslabones:<2} error={e:.6}");
+    }
+    println!("{} peores:", 5.min(filas.len()));
+    for (id, eslabones, e) in filas.iter().rev().take(5) {
+        println!("  {id:<12} eslabones={eslabones:<2} error={e:.6}");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- edit

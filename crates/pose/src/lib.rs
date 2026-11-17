@@ -22,6 +22,12 @@
 
 use moc3::Moc3;
 
+pub mod deformar;
+pub mod seleccion;
+
+pub use deformar::{evaluar, evaluar_pasos, rotacion, warp, CamposRotacion, Seleccion};
+pub use seleccion::Bindings;
+
 /// Alineación de cada bloque de keyform en el pool, en puntos.
 pub const ALINEACION: usize = 8;
 
@@ -89,6 +95,13 @@ pub struct Modelo {
     pub mallas: Vec<Malla>,
     pub warps: Vec<Warp>,
     pub rotaciones: Vec<Rotacion>,
+    /// Campos de cada keyform de rotación, indexados por el índice global de keyform
+    /// (`rotation_deformer.keyform_begin_indices[specific] + k`).
+    pub rot_campos: Vec<CamposRotacion>,
+    /// Banda de claves de cada deformador (`deformer.keyform_binding_band_indices`).
+    pub bandas_deformador: Vec<usize>,
+    /// Banda de claves de cada malla (`art_mesh.keyform_binding_band_indices`).
+    pub bandas_malla: Vec<usize>,
     /// Offsets de inicio (en floats) de la tabla de keyforms de cada malla.
     offsets_malla: Vec<i32>,
     /// Offsets de inicio (en floats) de la tabla de keyforms de warp (una entrada por keyform).
@@ -96,6 +109,15 @@ pub struct Modelo {
 }
 
 impl Modelo {
+    /// Cuántos keyforms declara un deformador (`keyform_counts` de su tabla).
+    pub fn keyforms_deformador(&self, i: usize) -> Option<usize> {
+        let d = self.deformadores.get(i)?;
+        match d.tipo {
+            Tipo::Warp => self.warps.get(d.specific).map(|w| w.keyform_count),
+            Tipo::Rotacion => self.rotaciones.get(d.specific).map(|r| r.keyform_count),
+        }
+    }
+
     /// Vertices de la malla `m` en el keyform `k`, tal como están en el archivo.
     pub fn vertices(&self, m: usize, k: usize) -> Option<&[[f32; 2]]> {
         let malla = self.mallas.get(m)?;
@@ -166,7 +188,11 @@ pub fn cargar(moc: &Moc3) -> Modelo {
         .map(|i| Deformador {
             indice: i,
             id: ids_df.get(i).cloned().unwrap_or_default(),
-            tipo: if tipos[i] == 0 { Tipo::Warp } else { Tipo::Rotacion },
+            tipo: if tipos[i] == 0 {
+                Tipo::Warp
+            } else {
+                Tipo::Rotacion
+            },
             specific: specific.get(i).copied().unwrap_or(0).max(0) as usize,
             padre: padres_df.get(i).copied().unwrap_or(-1).try_into().ok(),
         })
@@ -220,7 +246,49 @@ pub fn cargar(moc: &Moc3) -> Modelo {
         })
         .collect();
 
-    Modelo { pool, deformadores, mallas, warps, rotaciones, offsets_malla, offsets_warp: wkf_pool }
+    let bandas_df = i32s(moc, "deformer.keyform_binding_band_indices");
+    let bandas_malla_tab = i32s(moc, "art_mesh.keyform_binding_band_indices");
+    let bandas_deformador: Vec<usize> = bandas_df.iter().map(|b| (*b).max(0) as usize).collect();
+    let bandas_malla: Vec<usize> = bandas_malla_tab
+        .iter()
+        .map(|b| (*b).max(0) as usize)
+        .collect();
+
+    let angulos = f32s(moc, "rotation_deformer_keyform.angles");
+    let origenes_x = f32s(moc, "rotation_deformer_keyform.origin_xs");
+    let origenes_y = f32s(moc, "rotation_deformer_keyform.origin_ys");
+    let escalas = f32s(moc, "rotation_deformer_keyform.scales");
+    let reflejos_x = moc
+        .read_bool_section("rotation_deformer_keyform.reflect_xs")
+        .unwrap_or_default();
+    let reflejos_y = moc
+        .read_bool_section("rotation_deformer_keyform.reflect_ys")
+        .unwrap_or_default();
+    let rot_campos: Vec<CamposRotacion> = (0..angulos.len())
+        .map(|k| CamposRotacion {
+            angulo: angulos[k],
+            origen: [
+                origenes_x.get(k).copied().unwrap_or(0.0),
+                origenes_y.get(k).copied().unwrap_or(0.0),
+            ],
+            escala: escalas.get(k).copied().unwrap_or(1.0),
+            reflect_x: reflejos_x.get(k).copied().unwrap_or(false),
+            reflect_y: reflejos_y.get(k).copied().unwrap_or(false),
+        })
+        .collect();
+
+    Modelo {
+        pool,
+        deformadores,
+        mallas,
+        warps,
+        rotaciones,
+        rot_campos,
+        bandas_deformador,
+        bandas_malla,
+        offsets_malla,
+        offsets_warp: wkf_pool,
+    }
 }
 
 #[cfg(test)]
@@ -264,14 +332,17 @@ mod tests {
         for malla in &m.mallas {
             assert!(malla.vertices > 0, "{} sin vértices", malla.id);
             for k in 0..malla.keyform_count {
-                let v = m.vertices(malla.indice, k).unwrap_or_else(|| {
-                    panic!("{} keyform {k} fuera del pool", malla.id)
-                });
+                let v = m
+                    .vertices(malla.indice, k)
+                    .unwrap_or_else(|| panic!("{} keyform {k} fuera del pool", malla.id));
                 assert_eq!(v.len(), malla.vertices);
                 suma += bloque_puntos(malla.vertices);
             }
         }
-        assert_eq!(suma, total_esperado, "el pool no cuadra con la suma de bloques");
+        assert_eq!(
+            suma, total_esperado,
+            "el pool no cuadra con la suma de bloques"
+        );
         assert_eq!(m.pool.len(), 40_200);
     }
 
@@ -321,7 +392,10 @@ mod tests {
         assert!(profundidades.contains(&0));
         assert_eq!(m.mallas.iter().filter(|x| x.padre.is_none()).count(), 1);
         assert!(profundidades.iter().filter(|&&p| p > 0).all(|&p| p >= 3));
-        assert_eq!(m.deformadores.iter().filter(|d| d.padre.is_none()).count(), 3);
+        assert_eq!(
+            m.deformadores.iter().filter(|d| d.padre.is_none()).count(),
+            3
+        );
         assert_eq!(m.warps.len(), 50);
         assert_eq!(m.rotaciones.len(), 54);
     }

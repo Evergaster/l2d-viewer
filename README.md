@@ -17,7 +17,7 @@ y del *comportamiento*, no del código.
 | Cuerpo del modelo: partes, mallas, parámetros, keyforms, máscaras | ✅ verificado contra `py-moc3` |
 | Orden de dibujo por parte + visibilidad | ✅ |
 | Selección de keyform por parámetro | ✅ calibrada contra el Core: el keyform de reposo es el 0 (`docs/07`) |
-| **Evaluador propio (deformadores warp/rotation)** | ⬜ **bloqueador del visor independiente** |
+| **Evaluador propio (deformadores warp/rotation)** | 🟡 rotación y keyforms resueltos; el warp falla en cadenas largas — **12/134 exactas** (`docs/15`) |
 | Editor: sliders, vértices, capas, máscaras, claves, timeline, export | ✅ prototipo funcional (sobre el Core) |
 | Cargar lo exportado y borrar claves (ida y vuelta de `l2d-anim/1`) | ✅ verificado en navegador |
 | Guardar el modelo editado (`l2d-model/1`) y reabrirlo | ✅ verificado en navegador (`docs/14`) |
@@ -29,11 +29,12 @@ y del *comportamiento*, no del código.
 > Cierre del tramo editor y siguiente paso: `docs/10-cierre-del-editor.md`.
 
 ```bash
-cargo test                              # 24 pruebas + 1 doctest
+cargo test                              # 32 pruebas + 1 doctest
 cargo run -p l2d -- render modelo.moc3 textura.png out.png 0.3
 cargo run -p l2d -- body modelo.moc3    # partes, mallas, parámetros
 cargo run -p l2d -- params modelo.moc3  # parámetros reales con min/max/defecto
 cargo run -p l2d -- edit modelo.l2d modelo.moc3   # valida el modelo editado
+cargo run -p l2d -- pose modelo.moc3 --oraculo dump.json   # evalúa con el motor propio
 cargo run -p l2d -- inspect modelo.moc3
 tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 ```
@@ -54,6 +55,7 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 12. `docs/12-plan-deformacion.md` — plan del evaluador propio (warp/rotation).
 13. `docs/13-formulas-medidas.md` — fórmulas verificadas de la deformación y lo que sigue abierto.
 14. `docs/14-guardar-modelo.md` — **guardar el modelo** (`l2d-model/1`), con la verificación en navegador.
+15. `docs/15-motor-en-rust.md` — el evaluador propio en Rust y **cuánto acierta hoy** (12/134).
 - `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
@@ -188,6 +190,18 @@ píxeles**. Detalle y tabla de rechazos en `docs/14-guardar-modelo.md`.
 ```bash
 cargo run -p l2d -- edit modelo.l2d modelo.moc3   # válida sin navegador
 ```
+
+## Motor propio (`crates/pose`)
+
+`cargo run -p l2d -- pose <modelo.moc3> --oraculo <dump.json>` evalúa la pose con el motor
+escrito en Rust —selección de keyform por parámetro, rotaciones y warps— y mide la desviación
+contra el volcado del Core, malla por malla.
+
+Números de hoy, sin adornos: **12 de 134 mallas** de Hiyori dentro de 1e-3 (y 12 de 34 de
+Wanko), mediana 3,3·10⁻². Las cadenas cortas salen exactas a precisión de `f32`; las largas se
+desvían porque falta la conversión de espacio en la frontera rotación→warp (`docs/13` §5.21).
+`--malla ID` imprime la cadena, el keyform elegido en cada eslabón y el bbox tras cada paso:
+es el instrumento para seguir atacándolo. Detalle: `docs/15-motor-en-rust.md`.
 
 ## Ramas
 

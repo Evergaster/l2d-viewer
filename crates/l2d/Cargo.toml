@@ -14,4 +14,5 @@ moc3 = { path = "../moc3" }
 model3 = { path = "../model3" }
 raster = { path = "../raster" }
 edit = { path = "../edit" }
+pose = { path = "../pose" }
 serde_json = "1"
