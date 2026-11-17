@@ -27,7 +27,10 @@ fn main() {
         },
         Some("oracle") => match (args.get(1), args.get(2), args.get(3)) {
             (Some(j), Some(t), Some(o)) => {
-                let zoom = args.get(4).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.3);
+                let zoom = args
+                    .get(4)
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.3);
                 render_oracle(j, t, o, zoom)
             }
             _ => Err("uso: l2d oracle <dump.json> <textura.png> <salida.png> [zoom]".into()),
@@ -38,7 +41,10 @@ fn main() {
         },
         Some("render") => match (args.get(1), args.get(2), args.get(3)) {
             (Some(moc), Some(tex), Some(out)) => {
-                let scale = args.get(4).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.5);
+                let scale = args
+                    .get(4)
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(0.5);
                 render(moc, tex, out, scale)
             }
             _ => Err("uso: l2d render <modelo.moc3> <textura.png> <salida.png> [escala]".into()),
@@ -92,24 +98,37 @@ fn usage() -> String {
 /// Es el visor independiente: no carga el Core de Live2D en ningún momento.
 fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let Some(ruta) = args.first() else {
-        return Err("uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--param Nombre=valor]".into());
+        return Err(
+            "uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--param Nombre=valor]".into(),
+        );
     };
     let Some(salida) = args.get(1) else {
         return Err("falta la ruta de salida (.png)".into());
     };
     let mut ancho = 700u32;
     let mut valores: Vec<(String, f32)> = Vec::new();
+    let mut ocultar: Vec<String> = Vec::new();
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
             "--ancho" => {
-                ancho = args.get(i + 1).ok_or("--ancho necesita un número")?.parse()?;
+                ancho = args
+                    .get(i + 1)
+                    .ok_or("--ancho necesita un número")?
+                    .parse()?;
                 i += 2;
             }
             "--param" => {
                 if let Some(par) = args.get(i + 1) {
-                    let (nombre, valor) = par.split_once('=').ok_or("--param espera Nombre=valor")?;
+                    let (nombre, valor) =
+                        par.split_once('=').ok_or("--param espera Nombre=valor")?;
                     valores.push((nombre.to_string(), valor.parse::<f32>()?));
+                }
+                i += 2;
+            }
+            "--ocultar" => {
+                if let Some(capa) = args.get(i + 1) {
+                    ocultar.push(capa.clone());
                 }
                 i += 2;
             }
@@ -129,12 +148,30 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| format!("parámetro «{nombre}» no existe en el modelo"))?;
         v[p] = *valor;
     }
-    let canvas = vista.render(&v, ancho);
+    let mut ocultas = vista.ocultas_por_defecto();
+    for capa in &ocultar {
+        let p = vista
+            .partes
+            .iter()
+            .position(|x| x == capa)
+            .ok_or_else(|| format!("capa «{capa}» no existe en el modelo"))?;
+        ocultas[p] = true;
+    }
+    let canvas = vista.render(&v, ancho, &ocultas);
     let t2 = std::time::Instant::now();
     canvas.save_png(salida)?;
 
-    println!("modelo       {} ({} mallas, {} texturas)", vista.nombre, vista.body.art_meshes.len(), vista.texturas.len());
-    println!("lienzo       {} × {}  →  {} × {}", vista.lienzo.0, vista.lienzo.1, canvas.width, canvas.height);
+    println!(
+        "modelo       {} ({} mallas, {} texturas, {} capas)",
+        vista.nombre,
+        vista.body.art_meshes.len(),
+        vista.texturas.len(),
+        vista.partes.len()
+    );
+    println!(
+        "lienzo       {} × {}  →  {} × {}",
+        vista.lienzo.0, vista.lienzo.1, canvas.width, canvas.height
+    );
     println!("carga        {} ms", t1.duration_since(t0).as_millis());
     println!("dibujo       {} ms", t2.duration_since(t1).as_millis());
     println!("salida       {salida}");
@@ -159,7 +196,10 @@ fn kf_dominante(slots: &[pose::Slot]) -> (usize, f32) {
 /// pasan de una rotación a un warp (`docs/13` §5.21). El número que imprime es el que hay.
 fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let Some(ruta) = args.first() else {
-        return Err("uso: l2d pose <modelo.moc3> [--oraculo dump.json] [--malla ID] [--param Nombre=valor]".into());
+        return Err(
+            "uso: l2d pose <modelo.moc3> [--oraculo dump.json] [--malla ID] [--param Nombre=valor]"
+                .into(),
+        );
     };
     let mut oraculo: Option<String> = None;
     let mut solo_malla: Option<String> = None;
@@ -177,9 +217,8 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             "--param" => {
                 if let Some(par) = args.get(i + 1) {
-                    let (nombre, valor) = par
-                        .split_once('=')
-                        .ok_or("--param espera Nombre=valor")?;
+                    let (nombre, valor) =
+                        par.split_once('=').ok_or("--param espera Nombre=valor")?;
                     valores.push((nombre.to_string(), valor.parse::<f32>()?));
                 }
                 i += 2;
@@ -209,7 +248,11 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!(
         "pose         {} parámetros{}",
         pose_valores.len(),
-        if valores.is_empty() { " (por defecto)" } else { "" }
+        if valores.is_empty() {
+            " (por defecto)"
+        } else {
+            ""
+        }
     );
     for (nombre, valor) in &valores {
         println!("  {nombre:<20} {valor}");
@@ -226,14 +269,23 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
             .and_then(|d| d.as_array())
             .ok_or("el volcado no trae «drawables»")?;
         for d in arr {
-            let id = d.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let id = d
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             let pos = d
                 .get("pos")
                 .and_then(|x| x.as_array())
                 .map(|v| {
                     v.chunks(2)
                         .filter(|c| c.len() == 2)
-                        .map(|c| [c[0].as_f64().unwrap_or(0.0) as f32, c[1].as_f64().unwrap_or(0.0) as f32])
+                        .map(|c| {
+                            [
+                                c[0].as_f64().unwrap_or(0.0) as f32,
+                                c[1].as_f64().unwrap_or(0.0) as f32,
+                            ]
+                        })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -380,7 +432,11 @@ fn edit_cmd(ruta_l2d: &str, ruta_moc: &str) -> Result<(), Box<dyn Error>> {
     println!("formato      {}", doc.formato);
     println!(
         "modelo       {}",
-        if doc.modelo.is_empty() { "(sin nombre)" } else { doc.modelo.as_str() }
+        if doc.modelo.is_empty() {
+            "(sin nombre)"
+        } else {
+            doc.modelo.as_str()
+        }
     );
     // El origen va primero: sin él los índices de vértice no significan nada.
     doc.verificar_origen(&bytes)?;
@@ -427,13 +483,20 @@ fn inspect(path: &str) -> Result<(), Box<dyn Error>> {
     let bytes = std::fs::read(path)?;
     let m = moc3::Moc3::parse(&bytes)?;
 
-    println!("archivo      {path} ({:.1} KiB)", bytes.len() as f32 / 1024.0);
+    println!(
+        "archivo      {path} ({:.1} KiB)",
+        bytes.len() as f32 / 1024.0
+    );
     println!("formato      {}", m.version.label());
     println!("endianness   {:?}", m.endianness);
     println!(
         "canvas       {:.0} × {:.0} px  origen ({:.1}, {:.1})  ppu {:.1}  reverse_y={}",
-        m.canvas.width, m.canvas.height, m.canvas.origin_x, m.canvas.origin_y,
-        m.canvas.pixels_per_unit, m.canvas.reverse_y
+        m.canvas.width,
+        m.canvas.height,
+        m.canvas.origin_x,
+        m.canvas.origin_y,
+        m.canvas.pixels_per_unit,
+        m.canvas.reverse_y
     );
     println!("conteos      {} campos", m.counts.len());
 
@@ -459,7 +522,10 @@ fn model3(path: &str) -> Result<(), Box<dyn Error>> {
     let m = model3::Model3::parse(&json)?;
 
     println!("manifiesto   {path}");
-    println!("moc          {}", m.file_references.moc.as_deref().unwrap_or("(ninguno)"));
+    println!(
+        "moc          {}",
+        m.file_references.moc.as_deref().unwrap_or("(ninguno)")
+    );
     println!("texturas     {}", m.file_references.textures.len());
     for t in &m.file_references.textures {
         println!("  - {t}");
@@ -484,7 +550,10 @@ fn model3(path: &str) -> Result<(), Box<dyn Error>> {
     if !m.hit_areas.is_empty() {
         println!("hit areas    {}", m.hit_areas.join(", "));
     }
-    println!("assets       {} archivos referenciados", m.asset_paths().len());
+    println!(
+        "assets       {} archivos referenciados",
+        m.asset_paths().len()
+    );
     Ok(())
 }
 
@@ -506,13 +575,20 @@ fn body_cmd(path: &str) -> Result<(), Box<dyn Error>> {
     for (i, mesh) in b.art_meshes.iter().enumerate().take(6) {
         println!(
             "  [{i:2}] {:<16} v={:<4} idx={:<4} uv={:<5} kf={} tex={}",
-            mesh.id, mesh.vertex_count, mesh.index_count, mesh.uv_begin, mesh.keyform_begin,
+            mesh.id,
+            mesh.vertex_count,
+            mesh.index_count,
+            mesh.uv_begin,
+            mesh.keyform_begin,
             mesh.texture_index
         );
     }
     println!("parámetros   {}", b.parameters.len());
     for p in b.parameters.iter().take(6) {
-        println!("  {:<18} {:.1} .. {:.1}  (def {:.1})", p.id, p.min, p.max, p.default);
+        println!(
+            "  {:<18} {:.1} .. {:.1}  (def {:.1})",
+            p.id, p.min, p.max, p.default
+        );
     }
     println!(
         "keyform pos  {} floats, uvs {} floats, índices {}",
@@ -649,16 +725,35 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
         let n_verts = tri.iter().map(|v| (*v).max(0) as usize).max().unwrap_or(0) + 1;
 
         if std::env::var("L2D_DEBUG").is_ok() {
-            let pb0 = b.art_mesh_keyform_positions.get(mesh.keyform_begin as usize).copied().unwrap_or(0) as usize;
-            let (mut x0, mut y0, mut x1, mut y1) = (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+            let pb0 = b
+                .art_mesh_keyform_positions
+                .get(mesh.keyform_begin as usize)
+                .copied()
+                .unwrap_or(0) as usize;
+            let (mut x0, mut y0, mut x1, mut y1) = (
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            );
             for k in 0..n_verts {
                 if pb0 + 2 * k + 1 < b.keyform_positions.len() {
-                    let (x, y) = (b.keyform_positions[pb0 + 2 * k], b.keyform_positions[pb0 + 2 * k + 1]);
-                    x0 = x0.min(x); y0 = y0.min(y); x1 = x1.max(x); y1 = y1.max(y);
+                    let (x, y) = (
+                        b.keyform_positions[pb0 + 2 * k],
+                        b.keyform_positions[pb0 + 2 * k + 1],
+                    );
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x);
+                    y1 = y1.max(y);
                 }
             }
             if (x1 - x0) * (y1 - y0) > 0.5 {
-                eprintln!("malla {i:>3} ancho {:.2} alto {:.2}  x[{x0:.2},{x1:.2}] y[{y0:.2},{y1:.2}]", x1 - x0, y1 - y0);
+                eprintln!(
+                    "malla {i:>3} ancho {:.2} alto {:.2}  x[{x0:.2},{x1:.2}] y[{y0:.2},{y1:.2}]",
+                    x1 - x0,
+                    y1 - y0
+                );
             }
         }
 
@@ -779,14 +874,14 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
 
     // Mapeo verificado con el Core oficial:
     //   px = origin + pos * pixelsPerUnit  (el archivo guarda posiciones en unidades)
-    let ppu = if m.canvas.pixels_per_unit > 0.0 { m.canvas.pixels_per_unit } else { cw };
-    let (ox, oy) = (m.canvas.origin_x, m.canvas.origin_y);
-    let to_screen = |p: [f32; 2]| -> [f32; 2] {
-        [
-            (ox + p[0]) * zoom,
-            ih as f32 - (oy + p[1]) * zoom,
-        ]
+    let ppu = if m.canvas.pixels_per_unit > 0.0 {
+        m.canvas.pixels_per_unit
+    } else {
+        cw
     };
+    let (ox, oy) = (m.canvas.origin_x, m.canvas.origin_y);
+    let to_screen =
+        |p: [f32; 2]| -> [f32; 2] { [(ox + p[0]) * zoom, ih as f32 - (oy + p[1]) * zoom] };
 
     fn paint(
         canvas: &mut raster::Canvas,
@@ -807,8 +902,7 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
             let mk = |k: usize| {
                 let (p, uv) = r.verts[k];
                 let sp = to_screen(p);
-                raster::Vertex::new(sp[0], sp[1], uv[0], uv[1])
-                    .with_color(1.0, 1.0, 1.0, r.opacity)
+                raster::Vertex::new(sp[0], sp[1], uv[0], uv[1]).with_color(1.0, 1.0, 1.0, r.opacity)
             };
             canvas.triangle_masked([mk(a), mk(c), mk(d)], tex, raster::Blend::Normal, mask);
         }
@@ -816,11 +910,19 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
 
     let mut canvas = raster::Canvas::new(iw, ih);
     let fondo = std::env::var("L2D_BG").is_ok();
-    canvas.clear(if fondo { [120, 120, 120, 255] } else { [0, 0, 0, 0] });
+    canvas.clear(if fondo {
+        [120, 120, 120, 255]
+    } else {
+        [0, 0, 0, 0]
+    });
 
     let mut order: Vec<usize> = (0..ready.len()).filter(|i| ready[*i].is_some()).collect();
     // En Cubism, draw order mayor = más al frente.
-    order.sort_by(|a, c| keys[*c].partial_cmp(&keys[*a]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|a, c| {
+        keys[*c]
+            .partial_cmp(&keys[*a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut drawn = 0usize;
     let mut masked = 0usize;
@@ -840,7 +942,13 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
             masked += 1;
             Some(mc)
         };
-        paint(&mut canvas, r, mask_canvas.as_ref(), textures.first(), &to_screen);
+        paint(
+            &mut canvas,
+            r,
+            mask_canvas.as_ref(),
+            textures.first(),
+            &to_screen,
+        );
         drawn += r.indices.len() / 3;
     }
 
@@ -863,8 +971,6 @@ fn render(moc: &str, tex: &str, out: &str, zoom: f32) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-
-
 // ---------------------------------------------------------------- params
 
 /// Lista los parámetros del modelo: es la base de cualquier editor/animador.
@@ -872,10 +978,16 @@ fn params(path: &str) -> Result<(), Box<dyn Error>> {
     let bytes = std::fs::read(path)?;
     let m = moc3::Moc3::parse(&bytes)?;
     let b = m.body()?;
-    println!("{:<28} {:>7} {:>7} {:>8}", "parámetro", "mín", "máx", "defecto");
+    println!(
+        "{:<28} {:>7} {:>7} {:>8}",
+        "parámetro", "mín", "máx", "defecto"
+    );
     println!("{}", "-".repeat(54));
     for p in &b.parameters {
-        println!("{:<28} {:>7.3} {:>7.3} {:>8.3}", p.id, p.min, p.max, p.default);
+        println!(
+            "{:<28} {:>7.3} {:>7.3} {:>8.3}",
+            p.id, p.min, p.max, p.default
+        );
     }
     println!("\n{} parámetros", b.parameters.len());
     Ok(())
@@ -937,12 +1049,28 @@ fn render_oracle(json_path: &str, tex: &str, out: &str, zoom: f32) -> Result<(),
     for d in arr {
         let f = |k: &str| d[k].as_array().cloned().unwrap_or_default();
         meshes.push(M {
-            pos: f("pos").iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect(),
-            uv: f("uv").iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect(),
-            idx: f("idx").iter().filter_map(|x| x.as_i64()).map(|x| x as i32).collect(),
+            pos: f("pos")
+                .iter()
+                .filter_map(|x| x.as_f64())
+                .map(|x| x as f32)
+                .collect(),
+            uv: f("uv")
+                .iter()
+                .filter_map(|x| x.as_f64())
+                .map(|x| x as f32)
+                .collect(),
+            idx: f("idx")
+                .iter()
+                .filter_map(|x| x.as_i64())
+                .map(|x| x as i32)
+                .collect(),
             opacity: d["opacity"].as_f64().unwrap_or(1.0) as f32,
             order: d["renderOrder"].as_i64().unwrap_or(0),
-            masks: f("masks").iter().filter_map(|x| x.as_i64()).map(|x| x as usize).collect(),
+            masks: f("masks")
+                .iter()
+                .filter_map(|x| x.as_i64())
+                .map(|x| x as usize)
+                .collect(),
             texture: d["texture"].as_i64().unwrap_or(0).max(0) as usize,
         });
     }
@@ -954,7 +1082,10 @@ fn render_oracle(json_path: &str, tex: &str, out: &str, zoom: f32) -> Result<(),
     let flipv = std::env::var("L2D_NOFLIPV").is_err();
     let to_screen = |x: f32, y: f32| -> [f32; 2] {
         let yy = (oy + y * ppu) * zoom;
-        [(ox + x * ppu) * zoom, if noflip { yy } else { ih as f32 - yy }]
+        [
+            (ox + x * ppu) * zoom,
+            if noflip { yy } else { ih as f32 - yy },
+        ]
     };
     let paint = |canvas: &mut raster::Canvas, m: &M, mask: Option<&raster::Canvas>| {
         let texture = &textures[m.texture.min(textures.len() - 1)];
@@ -970,12 +1101,19 @@ fn render_oracle(json_path: &str, tex: &str, out: &str, zoom: f32) -> Result<(),
                 }
                 let sp = to_screen(m.pos[2 * i], m.pos[2 * i + 1]);
                 let (u, vv) = if 2 * i + 1 < m.uv.len() {
-                    (m.uv[2 * i], if flipv { 1.0 - m.uv[2 * i + 1] } else { m.uv[2 * i + 1] })
+                    (
+                        m.uv[2 * i],
+                        if flipv {
+                            1.0 - m.uv[2 * i + 1]
+                        } else {
+                            m.uv[2 * i + 1]
+                        },
+                    )
                 } else {
                     (0.0, 0.0)
                 };
-                vs[k] = raster::Vertex::new(sp[0], sp[1], u, vv)
-                    .with_color(1.0, 1.0, 1.0, m.opacity);
+                vs[k] =
+                    raster::Vertex::new(sp[0], sp[1], u, vv).with_color(1.0, 1.0, 1.0, m.opacity);
             }
             if ok {
                 let t = if plana { None } else { Some(texture) };
@@ -986,7 +1124,11 @@ fn render_oracle(json_path: &str, tex: &str, out: &str, zoom: f32) -> Result<(),
 
     let mut canvas = raster::Canvas::new(iw, ih);
     let fondo = std::env::var("L2D_BG").is_ok();
-    canvas.clear(if fondo { [120, 120, 120, 255] } else { [0, 0, 0, 0] });
+    canvas.clear(if fondo {
+        [120, 120, 120, 255]
+    } else {
+        [0, 0, 0, 0]
+    });
 
     // Las mallas que sirven de máscara en Cubism son geometría auxiliar:
     // recortan a otras y NO se dibujan como arte.
@@ -1004,7 +1146,13 @@ fn render_oracle(json_path: &str, tex: &str, out: &str, zoom: f32) -> Result<(),
         .filter(|i| todas || meshes[*i].opacity > 0.01)
         .collect();
     let al_reves = std::env::var("L2D_REVORDER").is_ok();
-    order.sort_by_key(|i| if al_reves { -meshes[*i].order } else { meshes[*i].order });
+    order.sort_by_key(|i| {
+        if al_reves {
+            -meshes[*i].order
+        } else {
+            meshes[*i].order
+        }
+    });
 
     let mut drawn = 0;
     let mut masked = 0;
@@ -1080,10 +1228,26 @@ fn demo(out: &str) -> Result<(), Box<dyn Error>> {
     }
 
     // Capa aditiva: demuestra que el blending por modo funciona.
-    filled_quad(&mut canvas, 0.0, 0.0, 640.0, 640.0, [0.85, 0.35, 0.15, 0.18], raster::Blend::Additive);
+    filled_quad(
+        &mut canvas,
+        0.0,
+        0.0,
+        640.0,
+        640.0,
+        [0.85, 0.35, 0.15, 0.18],
+        raster::Blend::Additive,
+    );
 
     // Marco multiplicativo, para ver el tercer modo.
-    filled_quad(&mut canvas, 0.0, 0.0, 640.0, 24.0, [0.6, 0.7, 1.0, 0.9], raster::Blend::Multiplicative);
+    filled_quad(
+        &mut canvas,
+        0.0,
+        0.0,
+        640.0,
+        24.0,
+        [0.6, 0.7, 1.0, 0.9],
+        raster::Blend::Multiplicative,
+    );
 
     if let Some(dir) = Path::new(out).parent() {
         if !dir.as_os_str().is_empty() {
@@ -1091,7 +1255,10 @@ fn demo(out: &str) -> Result<(), Box<dyn Error>> {
         }
     }
     canvas.save_png(out)?;
-    println!("demo escrito en {out} (640×640, {} triángulos)", nx * ny * 2);
+    println!(
+        "demo escrito en {out} (640×640, {} triángulos)",
+        nx * ny * 2
+    );
     Ok(())
 }
 
@@ -1104,7 +1271,9 @@ fn filled_quad(
     col: [f32; 4],
     mode: raster::Blend,
 ) {
-    let v = |x: f32, y: f32| raster::Vertex::new(x, y, 0.0, 0.0).with_color(col[0], col[1], col[2], col[3]);
+    let v = |x: f32, y: f32| {
+        raster::Vertex::new(x, y, 0.0, 0.0).with_color(col[0], col[1], col[2], col[3])
+    };
     c.triangle([v(x, y), v(x + w, y), v(x + w, y + h)], None, mode);
     c.triangle([v(x, y), v(x + w, y + h), v(x, y + h)], None, mode);
 }

@@ -36,6 +36,8 @@ pub struct Vista {
     pub origen: [f32; 2],
     pub ppu: f32,
     pub parametros: Vec<Parametro>,
+    /// Ids de las partes (capas), en el orden del archivo.
+    pub partes: Vec<String>,
     /// Nombre del modelo (el del archivo).
     pub nombre: String,
 }
@@ -120,6 +122,7 @@ impl Vista {
             .unwrap_or("modelo")
             .to_string();
 
+        let partes = bnd_partes(&body);
         Ok(Self {
             modelo,
             bnd,
@@ -133,8 +136,27 @@ impl Vista {
                 moc.canvas.width
             },
             parametros,
+            partes,
             nombre,
         })
+    }
+
+    /// Qué capas se ocultan por defecto: las que el archivo marca invisibles y las variantes
+    /// mutuamente excluyentes tipo `PartArmA` / `PartArmB` (se deja la A y se oculta la B; sin
+    /// esta regla el modelo sale con cuatro brazos — es la misma que usa el editor, `docs/14`).
+    pub fn ocultas_por_defecto(&self) -> Vec<bool> {
+        let mut ocultas: Vec<bool> = self.body.part_visible.iter().map(|v| !*v).collect();
+        ocultas.resize(self.partes.len(), false);
+        for (i, id) in self.partes.iter().enumerate() {
+            if let Some(base) = id.strip_suffix('A') {
+                if let Some(j) = self.partes.iter().position(|x| x == &format!("{base}B")) {
+                    if j != i {
+                        ocultas[j] = true;
+                    }
+                }
+            }
+        }
+        ocultas
     }
 
     /// Valores por defecto de todos los parámetros.
@@ -143,7 +165,10 @@ impl Vista {
     }
 
     /// Dibuja la pose con estos valores de parámetro, a `ancho_px` de ancho.
-    pub fn render(&self, valores: &[f32], ancho_px: u32) -> raster::Canvas {
+    ///
+    /// `ocultas` es una casilla por parte (`true` = capa oculta). Si va vacía se usa
+    /// [`Vista::ocultas_por_defecto`].
+    pub fn render(&self, valores: &[f32], ancho_px: u32, ocultas: &[bool]) -> raster::Canvas {
         let (cw, ch) = self.lienzo;
         let k = if cw > 0.0 { ancho_px as f32 / cw } else { 1.0 };
         let alto = (ch * k).round().max(1.0) as u32;
@@ -166,22 +191,13 @@ impl Vista {
         // Variantes mutuamente excluyentes: los modelos suelen traer dos juegos completos de
         // brazo (`PartArmA` / `PartArmB`) y sólo uno debe verse; el otro se oculta por defecto
         // (es la misma regla que el editor, docs/14; sin ella aparecen cuatro brazos).
-        let mut partes_ocultas: Vec<bool> = self.body.part_visible.iter().map(|v| !*v).collect();
-        partes_ocultas.resize(self.body.part_ids.len(), false);
-        for (i, id) in self.body.part_ids.iter().enumerate() {
-            if let Some(base) = id.strip_suffix('A') {
-                if let Some(j) = self
-                    .body
-                    .part_ids
-                    .iter()
-                    .position(|x| x == &format!("{base}B"))
-                {
-                    if j != i {
-                        partes_ocultas[j] = true;
-                    }
-                }
-            }
-        }
+        let por_defecto;
+        let partes_ocultas: &[bool] = if ocultas.is_empty() {
+            por_defecto = self.ocultas_por_defecto();
+            &por_defecto
+        } else {
+            ocultas
+        };
 
         // qué mallas son fuente de máscara: no se dibujan como arte
         let n = self.body.art_meshes.len();
@@ -390,4 +406,9 @@ impl Vista {
 
         canvas
     }
+}
+
+/// Ids de las partes del modelo (capas), para listarlas en una interfaz.
+fn bnd_partes(body: &Body) -> Vec<String> {
+    body.part_ids.clone()
 }

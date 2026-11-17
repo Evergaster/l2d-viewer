@@ -14,7 +14,9 @@
 
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, image, row, scrollable, slider, text, Space};
+use iced::widget::{
+    button, checkbox, column, container, image, row, scrollable, slider, text, Space,
+};
 use iced::{Alignment, Element, Length, Task};
 
 /// Ancho al que se dibuja el modelo para la ventana (el PNG se guarda al doble).
@@ -47,6 +49,8 @@ fn main() -> iced::Result {
 struct Visor {
     modelo: Option<Arc<view::Vista>>,
     valores: Vec<f32>,
+    /// Una casilla por capa (parte): `true` = oculta.
+    ocultas: Vec<bool>,
     imagen: Option<image::Handle>,
     error: Option<String>,
     ms: u128,
@@ -57,6 +61,7 @@ struct Visor {
 #[derive(Debug, Clone)]
 enum Msg {
     Param(usize, f32),
+    Capa(usize, bool),
     Reposo,
     Guardar,
     Tema,
@@ -68,6 +73,7 @@ impl Visor {
         let mut v = Self {
             modelo: None,
             valores: Vec::new(),
+            ocultas: Vec::new(),
             imagen: None,
             error: None,
             ms: 0,
@@ -78,6 +84,7 @@ impl Visor {
             Some(r) => match view::Vista::cargar(&r) {
                 Ok(vista) => {
                     v.valores = vista.valores_iniciales();
+                    v.ocultas = vista.ocultas_por_defecto();
                     v.mensaje = format!(
                         "{} · {} mallas · {} texturas",
                         vista.nombre,
@@ -104,8 +111,9 @@ impl Visor {
             return Task::none();
         };
         let valores = self.valores.clone();
+        let ocultas = self.ocultas.clone();
         let t0 = std::time::Instant::now();
-        let canvas = vista.render(&valores, ANCHO_DIBUJO);
+        let canvas = vista.render(&valores, ANCHO_DIBUJO, &ocultas);
         let ms = t0.elapsed().as_millis();
         let handle = image::Handle::from_rgba(canvas.width, canvas.height, canvas.pixels.clone());
         Task::done(Msg::Imagen(handle, ms))
@@ -119,9 +127,16 @@ impl Visor {
                 }
                 return self.redibujar();
             }
+            Msg::Capa(i, oculta) => {
+                if let Some(c) = self.ocultas.get_mut(i) {
+                    *c = oculta;
+                }
+                return self.redibujar();
+            }
             Msg::Reposo => {
                 if let Some(vista) = &self.modelo {
                     self.valores = vista.valores_iniciales();
+                    self.ocultas = vista.ocultas_por_defecto();
                 }
                 return self.redibujar();
             }
@@ -129,7 +144,7 @@ impl Visor {
                 let Some(vista) = &self.modelo else {
                     return Task::none();
                 };
-                let canvas = vista.render(&self.valores, 1400);
+                let canvas = vista.render(&self.valores, 1400, &self.ocultas);
                 let ruta = format!("{}.png", vista.nombre);
                 match canvas.save_png(&ruta) {
                     Ok(()) => self.mensaje = format!("guardado {ruta}"),
@@ -153,7 +168,7 @@ impl Visor {
                 .into();
         }
 
-        let panel = self.panel_parametros();
+        let panel = self.panel();
         let lienzo = self.lienzo();
         let pie = self.pie();
 
@@ -169,7 +184,42 @@ impl Visor {
             .into()
     }
 
-    fn panel_parametros(&self) -> Element<'_, Msg> {
+    /// Panel izquierdo: **capas** (partes) arriba y **parámetros** debajo.
+    fn panel(&self) -> Element<'_, Msg> {
+        let mut capas = column![].spacing(2);
+        for (i, nombre) in self
+            .modelo
+            .as_ref()
+            .map(|v| v.partes.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .enumerate()
+        {
+            let oculta = self.ocultas.get(i).copied().unwrap_or(false);
+            capas = capas.push(
+                checkbox(!oculta)
+                    .label(nombre.clone())
+                    .on_toggle(move |visible: bool| Msg::Capa(i, !visible))
+                    .size(16),
+            );
+        }
+
+        let mut cuerpo = column![
+            text("Capas").size(13),
+            Space::new().height(4),
+            scrollable(capas).height(Length::Fixed(170.0)),
+            Space::new().height(8),
+        ];
+        cuerpo = cuerpo.push(self.lista_parametros());
+        cuerpo
+            .push(Space::new().height(8))
+            .push(button(text("Volver a reposo")).on_press(Msg::Reposo).width(Length::Fill))
+            .push(button(text("Guardar PNG")).on_press(Msg::Guardar).width(Length::Fill))
+            .push(button(text("Cambiar tema")).on_press(Msg::Tema).width(Length::Fill))
+            .into()
+    }
+
+    fn lista_parametros(&self) -> Element<'_, Msg> {
         let mut lista = column![].spacing(6);
         for (i, p) in self
             .modelo
@@ -196,15 +246,11 @@ impl Visor {
 
         column![
             text("Parámetros").size(13),
-            Space::new().height(6),
+            Space::new().height(4),
             scrollable(lista).height(Length::Fill),
-            Space::new().height(8),
-            button(text("Volver a reposo")).on_press(Msg::Reposo).width(Length::Fill),
-            button(text("Guardar PNG")).on_press(Msg::Guardar).width(Length::Fill),
-            button(text("Cambiar tema")).on_press(Msg::Tema).width(Length::Fill),
         ]
-        .spacing(6)
-        .padding(12)
+        .spacing(2)
+        .height(Length::Fill)
         .into()
     }
 

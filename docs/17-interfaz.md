@@ -11,7 +11,8 @@ mover sus parámetros. No carga el Core de Live2D en ningún momento.
 |---|---|---|
 | Dibujo de una pose | `crates/view` | junta `pose` (geometría exacta, `docs/16`) con `raster` (CPU): mallas, texturas, máscaras y orden de dibujo |
 | Comando de línea | `l2d ver <modelo.moc3> <salida.png> [--ancho N] [--param Nombre=valor]` | el mismo dibujo, a PNG, sin ventana |
-| Visor | `crates/ui` → `l2d-ui` | ventana con un deslizador por parámetro, «Volver a reposo» y «Guardar PNG» |
+| Capas | `view::Vista::partes` + `ocultas_por_defecto()` | una casilla por parte; respeta `part_visible` del archivo y oculta la variante `…B` de cada par `…A`/`…B` |
+| Visor | `crates/ui` → `l2d-ui` | ventana con **capas** y un deslizador por parámetro, «Volver a reposo» y «Guardar PNG» |
 | Lanzador | `tools/visor.sh [modelo.moc3]` | compila si hace falta y abre el visor con el EGL de Mesa exportado |
 
 ```bash
