@@ -25,8 +25,10 @@ use moc3::Moc3;
 pub mod deformar;
 pub mod seleccion;
 
-pub use deformar::{evaluar, evaluar_pasos, rotacion, warp, CamposRotacion, Seleccion};
-pub use seleccion::Bindings;
+pub use deformar::{
+    componer, evaluar, evaluar_pasos, rotacion, warp, CamposRotacion, Compuesto, Seleccion,
+};
+pub use seleccion::{Bindings, Slot};
 
 /// Alineación de cada bloque de keyform en el pool, en puntos.
 pub const ALINEACION: usize = 8;

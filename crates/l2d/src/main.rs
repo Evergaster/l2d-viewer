@@ -85,6 +85,15 @@ fn usage() -> String {
 
 // ---------------------------------------------------------------- pose
 
+/// Keyform de mayor peso de una lista de slots.
+fn kf_dominante(slots: &[pose::Slot]) -> (usize, f32) {
+    slots
+        .iter()
+        .copied()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap_or((0, 1.0))
+}
+
 /// Evalúa una pose con el motor propio (`crates/pose`) y, si se le pasa un volcado del
 /// Core, mide la desviación por malla.
 ///
@@ -136,6 +145,7 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
         pose_valores[p] = *valor;
     }
     let sel = pose::Seleccion::con_valores(&modelo, &bnd, &pose_valores);
+    let comp = pose::componer(&modelo, &sel);
 
     println!("modelo       {ruta}");
     println!(
@@ -182,7 +192,7 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
                 continue;
             }
         }
-        let Some(p) = pose::evaluar(&modelo, &sel, malla.indice) else {
+        let Some(p) = pose::evaluar(&modelo, &comp, &sel, malla.indice) else {
             continue;
         };
         if let Some(o) = esperado.get(&malla.id) {
@@ -214,32 +224,38 @@ fn pose_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     if let Some((id, p)) = &detalle {
         // diagnóstico: qué keyform usa cada eslabón y con qué campos
         if let Some(m) = modelo.mallas.iter().find(|x| &x.id == id) {
-            println!("\n{id}: keyform de malla {} de {}", sel.malla[m.indice], m.keyform_count);
+            let (kf_m, w_m) = kf_dominante(&sel.malla[m.indice]);
+            println!(
+                "\n{id}: keyform de malla {kf_m} de {} (peso {w_m:.2})",
+                m.keyform_count
+            );
             for d in modelo.cadena(m.indice) {
                 let def = &modelo.deformadores[d];
-                let k = sel.deformador[d];
+                let (k, w) = kf_dominante(&sel.deformador[d]);
                 match def.tipo {
                     pose::Tipo::Rotacion => {
                         let r = &modelo.rotaciones[def.specific];
                         let c = &modelo.rot_campos[r.keyform_begin + k];
                         println!(
-                            "  {:<12} rotación  kf {}/{}  ángulo {:+.2}  escala {:.6}  origen [{:+.4}, {:+.4}]  refl {}{}",
-                            def.id, k, r.keyform_count, c.angulo, c.escala,
+                            "  {:<12} rotación  kf {}/{} (w {:.2})  ángulo {:+.2}  escala {:.6}  origen [{:+.4}, {:+.4}]  refl {}{}",
+                            def.id, k, r.keyform_count, w, c.angulo, c.escala,
                             c.origen[0], c.origen[1],
                             if c.reflect_x { "x" } else { "" },
                             if c.reflect_y { "y" } else { "" }
                         );
                     }
                     pose::Tipo::Warp => {
-                        let w = &modelo.warps[def.specific];
-                        println!("  {:<12} warp      kf {}/{}  rejilla {}×{} celdas",
-                            def.id, k, w.keyform_count, w.filas, w.columnas);
+                        let warp = &modelo.warps[def.specific];
+                        println!(
+                            "  {:<12} warp      kf {}/{} (w {:.2})  rejilla {}×{} celdas",
+                            def.id, k, warp.keyform_count, w, warp.filas, warp.columnas
+                        );
                     }
                 }
             }
         }
         if let Some(m) = modelo.mallas.iter().find(|x| &x.id == id) {
-            if let Some(pasos) = pose::evaluar_pasos(&modelo, &sel, m.indice) {
+            if let Some(pasos) = pose::evaluar_pasos(&modelo, &comp, &sel, m.indice) {
                 println!("\n  paso a paso (bbox en el espacio del Core):");
                 for (nombre, v) in pasos {
                     let (mut x0, mut x1) = (f32::MAX, f32::MIN);

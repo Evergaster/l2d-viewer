@@ -853,3 +853,12 @@ floats) ni sale de la geometría que se puede leer. Las dos salidas posibles son
 semántica del warp de una fuente independiente y verificable, o (b) dejar el motor en su subset
 medido (12/134) y construir el producto sobre el Core, como ya hace el editor. Elegir (b) no es
 rendirse: es no bloquear el producto por una incógnita de ingeniería inversa.
+
+### 5.28 Cerrado (17 nov): no era el dominio, era la composición
+
+La respuesta estaba en una especificación no oficial y en una implementación libre, no en un
+rectángulo: la deformación se **compone deformador a deformador** (escala heredada, traslación
+deformada por el padre, ángulo corregido por sondeo) y los keyforms se **interpolan con pesos**.
+Con eso, el dominio vuelve a ser `[0,1]²` y el motor da **134/134** en Hiyori y **34/34** en
+Wanko, también en poses movidas. Los rectángulos calibrados de §5.5–§5.16 compensaban esta pieza
+que faltaba. Detalle: `docs/16-motor-cerrado.md`.

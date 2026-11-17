@@ -1,9 +1,8 @@
 //! Marcador del motor propio contra el volcado del Core.
 //!
-//! No es una prueba de «todo bien»: es un **suelo**. Hoy el motor acierta las cadenas
-//! cortas y falla las que pasan una rotación a un warp (`docs/13` §5.21), y estos números
-//! son los que hay. Si alguien arregla el dominio del warp, la prueba sigue pasando; si
-//! alguien lo rompe, falla.
+//! El motor reproduce el Core en las **134** mallas de Hiyori y las **34** de Wanko, con
+//! error por debajo de 1e-3 (mediana 5·10⁻⁶, o sea precisión de `f32`). Si alguien toca la
+//! composición, la selección de keyform o el warp y esto deja de cuadrar, la prueba lo dice.
 //!
 //! Los modelos no se versionan (licencia de Live2D): si no están, las pruebas se saltan.
 
@@ -48,12 +47,14 @@ fn marcador(
     modelo: &Modelo,
     bnd: &Bindings,
     oraculo: &HashMap<String, Vec<[f32; 2]>>,
+    valores: &[f32],
 ) -> (usize, f32, f32) {
-    let sel = Seleccion::reposo(modelo, bnd);
+    let sel = Seleccion::con_valores(modelo, bnd, valores);
+    let comp = pose::componer(modelo, &sel);
     let mut errores = Vec::new();
     for malla in &modelo.mallas {
         let (Some(p), Some(o)) = (
-            pose::evaluar(modelo, &sel, malla.indice),
+            pose::evaluar(modelo, &comp, &sel, malla.indice),
             oraculo.get(&malla.id),
         ) else {
             continue;
@@ -110,10 +111,10 @@ fn hiyori_no_empeora() {
     let Some((modelo, bnd, oraculo)) = cargar(HIYORI.0, HIYORI.1) else {
         return; // modelos no versionados
     };
-    let (exactas, mediana, maximo) = marcador(&modelo, &bnd, &oraculo);
-    assert!(exactas >= 12, "mallas exactas: {exactas} (el suelo es 12)");
-    assert!(mediana <= 0.034, "mediana: {mediana} (el suelo es 0,033)");
-    assert!(maximo <= 0.093, "máximo: {maximo} (el suelo es 0,0921)");
+    let (exactas, mediana, maximo) = marcador(&modelo, &bnd, &oraculo, &[]);
+    assert_eq!(exactas, 134, "mallas exactas: {exactas} de 134");
+    assert!(mediana <= 1e-5, "mediana: {mediana}");
+    assert!(maximo <= 1e-3, "máximo: {maximo}");
 }
 
 #[test]
@@ -121,8 +122,8 @@ fn wanko_no_empeora() {
     let Some((modelo, bnd, oraculo)) = cargar(WANKO.0, WANKO.1) else {
         return;
     };
-    let (exactas, mediana, maximo) = marcador(&modelo, &bnd, &oraculo);
-    assert!(exactas >= 12, "mallas exactas: {exactas} (el suelo es 12)");
-    assert!(mediana <= 0.211, "mediana: {mediana} (el suelo es 0,2102)");
-    assert!(maximo <= 0.845, "máximo: {maximo} (el suelo es 0,8437)");
+    let (exactas, mediana, maximo) = marcador(&modelo, &bnd, &oraculo, &[]);
+    assert_eq!(exactas, 34, "mallas exactas: {exactas} de 34");
+    assert!(mediana <= 1e-5, "mediana: {mediana}");
+    assert!(maximo <= 1e-3, "máximo: {maximo}");
 }

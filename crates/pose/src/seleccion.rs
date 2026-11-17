@@ -1,20 +1,22 @@
 //! Selección de keyform por valor de parámetro.
 //!
-//! Implementa la regla medida contra el Core en `docs/13` §2, que en Hiyori cuadra con el
-//! número de keyforms declarado en **238/238** elementos (134 mallas + 50 warps +
-//! 54 rotaciones):
+//! Dos piezas, las dos verificadas contra el Core (y contra `mocari`, Rust/MIT, y la
+//! especificación no oficial de AyagamiDev — nunca contra el SDK):
 //!
-//! - `keyform_binding_index.indices[s]` **no** es una banda: es el índice de la lista de
-//!   claves del slot `s`.
-//! - La banda `b` ocupa los slots `[begin[b], begin[b] + count[b])`.
-//! - El índice de keyform es el **radix** de la posición del valor en cada lista, en el
-//!   orden de la banda: `kf = Σ_i pos_i · Π_{j<i} len(claves_j)`.
-//!
-//! Límite conocido (no oculto): con parámetros movidos la regla **no** se sostiene
-//! (`docs/13` §5.7: 1/14 en `ParamAngleZ=10`). Aquí se implementa tal cual está medida,
-//! y el CLI de `pose` imprime la discrepancia en vez de esconderla.
+//! 1. **Qué banda de claves usa cada elemento** (`*_keyform_binding_band_indices`) y qué
+//!    parámetro es dueño de cada binding (`parameter.keyform_binding_begin_indices`: un
+//!    parámetro puede tener varios bindings y manda el dueño del rango).
+//! 2. **Slots con peso**: el Core no elige «el keyform más cercano», **interpola** entre los
+//!    dos vecinos de cada eje. Con `t = (v − k_i)/(k_{i+1} − k_i)`, el keyform activo por eje
+//!    es `k_i + (t ≠ 0)` y el peso se reparte `(1−t)`/`t`, multiplicando entre ejes. Cuando el
+//!    valor cae en una clave queda un solo keyform con peso 1; cuando cae en la **última**,
+//!    el activo es el de la derecha — la excepción de la banda 7 de Hiyori que costó
+//!    `docs/13` §5.7 y que con esta regla deja de ser una excepción.
 
 use moc3::Moc3;
+
+/// Un keyform activo y cuánto pesa en la mezcla.
+pub type Slot = (usize, f32);
 
 /// Tablas de `keyform_binding.*` más los valores por defecto de los parámetros.
 pub struct Bindings {
@@ -27,9 +29,8 @@ pub struct Bindings {
     k_ini: Vec<i32>,
     k_cnt: Vec<i32>,
     keys: Vec<f32>,
-    /// slot → parámetro al que pertenece (`None` si el slot no está en ninguna banda… o no
-    /// se pudo resolver).
-    slot_a_param: Vec<Option<usize>>,
+    /// Binding → parámetro dueño.
+    duenio: Vec<Option<usize>>,
 }
 
 impl Bindings {
@@ -41,12 +42,6 @@ impl Bindings {
             .unwrap_or_default();
         let kbi = moc
             .read_i32_section("keyform_binding_index.indices")
-            .unwrap_or_default();
-        let p_ini = moc
-            .read_i32_section("parameter.keyform_binding_begin_indices")
-            .unwrap_or_default();
-        let p_cnt = moc
-            .read_i32_section("parameter.keyform_binding_counts")
             .unwrap_or_default();
         let b_ini = moc
             .read_i32_section("keyform_binding_band.begin_indices")
@@ -61,14 +56,31 @@ impl Bindings {
             .read_i32_section("keyform_binding.keys_counts")
             .unwrap_or_default();
         let keys = moc.read_f32_section("keys.values").unwrap_or_default();
+        let p_ini = moc
+            .read_i32_section("parameter.keyform_binding_begin_indices")
+            .unwrap_or_default();
 
-        let mut slot_a_param = vec![None; kbi.len()];
-        for (p, id) in parametros.iter().enumerate() {
-            let ini = p_ini.get(p).copied().unwrap_or(0).max(0) as usize;
-            let cnt = p_cnt.get(p).copied().unwrap_or(0).max(0) as usize;
-            for s in ini..(ini + cnt).min(slot_a_param.len()) {
-                slot_a_param[s] = Some(p);
-                let _ = id;
+        // Dueño de cada binding: el parámetro cuyo `begin` lo cubre hasta el siguiente
+        // `begin` estrictamente mayor (un parámetro sin binding repite el anterior y no
+        // reclama nada nuevo).
+        let n_bind = k_ini.len();
+        let mut duenio = vec![None; n_bind];
+        for (p, ini) in p_ini.iter().enumerate() {
+            let ini = *ini;
+            if ini < 0 || ini as usize >= n_bind {
+                continue;
+            }
+            let fin = p_ini[p + 1..]
+                .iter()
+                .filter(|s| **s > ini)
+                .copied()
+                .min()
+                .map(|s| s as usize)
+                .unwrap_or(n_bind);
+            for slot in duenio.iter_mut().take(fin).skip(ini as usize) {
+                if slot.is_none() {
+                    *slot = Some(p);
+                }
             }
         }
 
@@ -81,7 +93,7 @@ impl Bindings {
             k_ini,
             k_cnt,
             keys,
-            slot_a_param,
+            duenio,
         }
     }
 
@@ -91,18 +103,18 @@ impl Bindings {
         let cnt = self.b_cnt.get(banda).copied().unwrap_or(0).max(0) as usize;
         let mut out = Vec::with_capacity(cnt);
         for s in ini..ini + cnt {
-            let Some(&lista) = self.kbi.get(s) else {
+            let Some(&slot) = self.kbi.get(s) else {
                 continue;
             };
-            let lista = lista.max(0) as usize;
-            let ki = self.k_ini.get(lista).copied().unwrap_or(0).max(0) as usize;
-            let kc = self.k_cnt.get(lista).copied().unwrap_or(0).max(0) as usize;
+            let binding = slot.max(0) as usize;
+            let ki = self.k_ini.get(binding).copied().unwrap_or(0).max(0) as usize;
+            let kc = self.k_cnt.get(binding).copied().unwrap_or(0).max(0) as usize;
             let valores = self
                 .keys
                 .get(ki..(ki + kc).min(self.keys.len()))
                 .unwrap_or(&[])
                 .to_vec();
-            out.push((self.slot_a_param.get(s).copied().flatten(), valores));
+            out.push((self.duenio.get(binding).copied().flatten(), valores));
         }
         out
     }
@@ -116,40 +128,86 @@ impl Bindings {
             .unwrap_or(0.0)
     }
 
-    /// Índice de keyform de una banda con los valores por defecto del modelo.
-    pub fn indice(&self, banda: usize, n_keyforms: usize) -> usize {
-        self.indice_con_valores(banda, n_keyforms, &[])
-    }
-
-    /// Índice de keyform de una banda con valores concretos de parámetro.
+    /// Keyforms activos y sus pesos para una banda con estos valores de parámetro.
     ///
-    /// `valores[p]` manda sobre el valor por defecto de `p`. Un valor fuera del rango de la
-    /// lista se recorta a la clave extrema (no se extrapola el índice).
-    pub fn indice_con_valores(&self, banda: usize, n_keyforms: usize, valores: &[f32]) -> usize {
+    /// El primero de la lista es siempre la combinación «todo a la izquierda»: de ahí salen
+    /// los flags de espejo, porque la especificación dice que se usan los del primer form.
+    pub fn slots(&self, banda: usize, n_keyforms: usize, valores: &[f32]) -> Vec<Slot> {
         if n_keyforms == 0 {
-            return 0;
+            return Vec::new();
         }
-        let lista = self.claves_de(banda);
-        let mut pos = 0usize;
-        let mut mul = 1usize;
-        for (parametro, claves) in lista {
+        if n_keyforms == 1 {
+            return vec![(0, 1.0)];
+        }
+        let ejes = self.claves_de(banda);
+        if ejes.is_empty() {
+            return vec![(0, 1.0)];
+        }
+
+        let mut tramos: Vec<(usize, f32, usize)> = Vec::with_capacity(ejes.len());
+        let mut stride = 1usize;
+        for (parametro, claves) in &ejes {
             if claves.is_empty() {
                 continue;
             }
             let v = parametro.map(|p| self.valor(p, valores)).unwrap_or(0.0);
-            let mut mejor = 0usize;
-            let mut dist = f32::INFINITY;
-            for (i, k) in claves.iter().enumerate() {
-                let d = (k - v).abs();
-                if d < dist {
-                    dist = d;
-                    mejor = i;
+            let (izq, t) = if claves.len() < 2 {
+                (0, 0.0)
+            } else if v <= claves[0] {
+                (0, 0.0)
+            } else if v >= claves[claves.len() - 1] {
+                (claves.len() - 2, 1.0)
+            } else {
+                let mut i = 0usize;
+                while i + 2 < claves.len() && v >= claves[i + 1] {
+                    i += 1;
+                }
+                let ancho = claves[i + 1] - claves[i];
+                let t = if ancho.abs() < 1e-12 {
+                    0.0
+                } else {
+                    (v - claves[i]) / ancho
+                };
+                (i, t.clamp(0.0, 1.0))
+            };
+            tramos.push((izq, t, stride));
+            stride *= claves.len();
+        }
+
+        let mut slots = Vec::new();
+        for mascara in 0..(1usize << tramos.len()) {
+            let mut indice = 0usize;
+            let mut peso = 1.0f32;
+            for (eje, &(izq, t, st)) in tramos.iter().enumerate() {
+                if (mascara >> eje) & 1 == 1 {
+                    if t == 0.0 {
+                        peso = 0.0;
+                        break;
+                    }
+                    indice += (izq + 1) * st;
+                    peso *= t;
+                } else {
+                    indice += izq * st;
+                    peso *= 1.0 - t;
                 }
             }
-            pos += mejor * mul;
-            mul *= claves.len();
+            if peso > 0.0 && indice < n_keyforms {
+                slots.push((indice, peso));
+            }
         }
-        pos.min(n_keyforms - 1)
+        if slots.is_empty() {
+            slots.push((0, 1.0));
+        }
+        slots
+    }
+
+    /// Keyform de mayor peso para esta banda (el «de reposo» del elemento).
+    pub fn indice(&self, banda: usize, n_keyforms: usize, valores: &[f32]) -> usize {
+        self.slots(banda, n_keyforms, valores)
+            .into_iter()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+            .unwrap_or(0)
     }
 }
 
@@ -157,31 +215,67 @@ impl Bindings {
 mod pruebas {
     use super::*;
 
+    fn un_eje() -> Bindings {
+        // banda de un eje con claves [-10, 0, 10]
+        Bindings {
+            parametros: vec!["A".into()],
+            defectos: vec![0.0],
+            kbi: vec![0],
+            b_ini: vec![0],
+            b_cnt: vec![1],
+            k_ini: vec![0],
+            k_cnt: vec![3],
+            keys: vec![-10.0, 0.0, 10.0],
+            duenio: vec![Some(0)],
+        }
+    }
+
     #[test]
-    fn el_radix_es_el_producto_de_las_listas() {
-        // una banda con listas de 3 y 2 claves → 6 keyforms, en orden de archivo
+    fn un_solo_keyform_no_necesita_banda() {
+        let b = un_eje();
+        assert_eq!(b.slots(0, 1, &[]), vec![(0, 1.0)]);
+    }
+
+    #[test]
+    fn el_peso_se_reparte_entre_dos_claves() {
+        let b = un_eje();
+        // en la clave del medio: un solo slot, el 1
+        assert_eq!(b.slots(0, 3, &[0.0]), vec![(1, 1.0)]);
+        // a mitad entre 0 y 10: mitades de los keyforms 1 y 2
+        let s = b.slots(0, 3, &[5.0]);
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s[0].0 == 1 && (s[0].1 - 0.5).abs() < 1e-6, "{s:?}");
+        assert!(s[1].0 == 2 && (s[1].1 - 0.5).abs() < 1e-6, "{s:?}");
+        let total: f32 = s.iter().map(|x| x.1).sum();
+        assert!((total - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn en_la_ultima_clave_gana_la_de_la_derecha() {
+        let b = un_eje();
+        assert_eq!(b.slots(0, 3, &[10.0]), vec![(2, 1.0)]);
+        assert_eq!(b.slots(0, 3, &[99.0]), vec![(2, 1.0)]);
+        assert_eq!(b.slots(0, 3, &[-99.0]), vec![(0, 1.0)]);
+    }
+
+    #[test]
+    fn dos_ejes_producen_cuatro_slots_que_suman_uno() {
         let b = Bindings {
             parametros: vec!["A".into(), "B".into()],
             defectos: vec![0.0, 0.0],
             kbi: vec![0, 1],
             b_ini: vec![0],
             b_cnt: vec![2],
-            k_ini: vec![0, 3],
-            k_cnt: vec![3, 2],
-            keys: vec![-10.0, 0.0, 10.0, 0.0, 1.0],
-            slot_a_param: vec![Some(0), Some(1)],
+            k_ini: vec![0, 2],
+            k_cnt: vec![2, 2],
+            keys: vec![-1.0, 1.0, -1.0, 1.0],
+            duenio: vec![Some(0), Some(1)],
         };
-        // A=-10 (i=0) y B=0 (i=0) → 0·1 + 0·3 = 0
-        assert_eq!(b.indice_con_valores(0, 6, &[-10.0, 0.0]), 0);
-        // A=-10, B=1 → 0 + 1·3 = 3
-        assert_eq!(b.indice_con_valores(0, 6, &[-10.0, 1.0]), 3);
-        // A=0 (i=1), B=0 → 1
-        assert_eq!(b.indice_con_valores(0, 6, &[0.0, 0.0]), 1);
-        // A=10 (i=2), B=1 → 2 + 3 = 5 (el último)
-        assert_eq!(b.indice_con_valores(0, 6, &[10.0, 1.0]), 5);
-        // fuera de rango: cada valor cae en su clave extrema (A→i=2, B→i=0) → 2
-        assert_eq!(b.indice_con_valores(0, 6, &[999.0, -5.0]), 2);
-        // sin valores: usa los defectos (A=0, B=0) → 1
-        assert_eq!(b.indice(0, 6), 1);
+        let s = b.slots(0, 4, &[0.0, 0.0]);
+        assert_eq!(s.len(), 4, "{s:?}");
+        assert_eq!(s[0].0, 0);
+        assert!((s[0].1 - 0.25).abs() < 1e-5, "{s:?}");
+        let total: f32 = s.iter().map(|x| x.1).sum();
+        assert!((total - 1.0).abs() < 1e-5, "los pesos suman {total}");
     }
 }
