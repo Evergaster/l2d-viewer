@@ -811,3 +811,11 @@ con evidencia de por qué lleva seis sesiones sin cerrarse.
 
 El instrumento para seguir está ya en Rust: `l2d pose --malla <id>` imprime la cadena, el keyform de
 cada eslabón y el bbox tras cada paso (`docs/15`).
+
+**Cuántas jaulas hay en cada espacio** (medido hoy sobre las 50 de Hiyori, ancho del bbox del
+primer keyform): **23 en unidades** (anchos de 157 a 1427) y **27 en espacio normalizado**
+(anchos de 0,18 a 1,17). No es un caso raro de dos warps: es casi la mitad del modelo. Y el patrón
+de las cadenas lo acompaña: **ningún warp en unidades alimenta a otro warp**; siempre le sigue una
+rotación (`Warp37 → Rotation1 → Rotation2 → …`), que es la que con `escala = 1/ppu` devuelve el
+espacio normalizado. Las mallas hacen lo mismo (`ArtMesh104` está en ±268 y su padre es una
+rotación; `ArtMesh63` está en 0,2–0,8 y su padre es un warp).
