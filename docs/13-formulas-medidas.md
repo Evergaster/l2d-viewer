@@ -819,3 +819,37 @@ de las cadenas lo acompaña: **ningún warp en unidades alimenta a otro warp**; 
 rotación (`Warp37 → Rotation1 → Rotation2 → …`), que es la que con `escala = 1/ppu` devuelve el
 espacio normalizado. Las mallas hacen lo mismo (`ArtMesh104` está en ±268 y su padre es una
 rotación; `ArtMesh63` está en 0,2–0,8 y su padre es un warp).
+
+### 5.27 Tres hipótesis más, medidas y descartadas (17 nov, cuarta tanda)
+
+La pista del aspecto del rectángulo parecía la buena: el dominio calibrado de `Warp1`
+(0,5690 × 0,7982) tiene **exactamente** el aspecto del lienzo (`alto/ancho = 4175/2976 = 1,4029`
+frente a `0,7982/0,5690 = 1,4032`). Eso sugiere que el dominio es un cuadrado en coordenadas
+normalizadas del lienzo. Probado con la cadena entera:
+
+| Hipótesis | Mallas < 1e-3 | Mediana |
+|---|---|---|
+| espacio modelo, `u = 5x`, `v = 5y` (lo de siempre) | **12/134** | **0,0327** |
+| entrada normalizada por el lienzo (`v = 5y/H`), jaula por jaula según su aspecto | 3/134 | 0,0873 |
+| entrada normalizada multiplicando `v` por el aspecto | 3/134 | 0,1453 |
+| **warp inverso** (invertir la rejilla elegida, leer la celosía identidad) | 3/134 | 1,3315 |
+
+Las tres quedan descartadas. La coincidencia del aspecto es real pero **no** significa que la
+entrada se normalice por el lienzo: al aplicarlo, se rompen justo las 9 mallas que ya eran exactas.
+
+**Y un límite del método, medido:** de los **129** casos aislables (un warp con sólo rotaciones
+después), **108 son `Warp1`** y 1 es `Warp53`; los otros 20 no bajan de 1e-3 de residuo. O sea: el
+dominio sólo se puede medir hoy para el warp **raíz**. Los demás warps nunca quedan con «sólo
+rotaciones después», así que no hay forma de aislarlos con este montaje.
+
+Herramientas nuevas de esta tanda: `tools/deform-espacio.py` (espacio de entrada por jaula) y
+`tools/warp-dominio.py` (rectángulo medido por warp y comparación con los candidatos del archivo:
+rejilla del keyform elegido, rejilla más regular, unión de keyforms, caja de los hijos — ninguno
+coincide).
+
+**Dónde queda:** 17 hipótesis descartadas con números. Lo que falta sigue siendo una sola cosa —de
+dónde sale ese rectángulo— y ya está medido que **no está en el archivo** (ninguna sección de 50×4
+floats) ni sale de la geometría que se puede leer. Las dos salidas posibles son: (a) conseguir la
+semántica del warp de una fuente independiente y verificable, o (b) dejar el motor en su subset
+medido (12/134) y construir el producto sobre el Core, como ya hace el editor. Elegir (b) no es
+rendirse: es no bloquear el producto por una incógnita de ingeniería inversa.
