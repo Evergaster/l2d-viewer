@@ -41,6 +41,10 @@ fn main() {
             }
             _ => Err("uso: l2d render <modelo.moc3> <textura.png> <salida.png> [escala]".into()),
         },
+        Some("edit") => match (args.get(1), args.get(2)) {
+            (Some(l2d), Some(moc)) => edit_cmd(l2d, moc),
+            _ => Err("uso: l2d edit <archivo.l2d> <modelo.moc3>".into()),
+        },
         Some("-h") | Some("--help") | None => {
             println!("{}", usage());
             Ok(())
@@ -61,6 +65,8 @@ fn usage() -> String {
      l2d inspect <archivo.moc3>            contenedor: cabecera, canvas, conteos, secciones\n  \
      l2d body    <archivo.moc3>            cuerpo: partes, mallas, parámetros, keyforms\n  \
      l2d params  <archivo.moc3>            parámetros: id, mínimo, máximo, defecto\n  \
+     l2d edit    <archivo.l2d> <modelo.moc3>\n                                        \
+     valida el modelo editado contra su .moc3 (huella, mallas, vértices)\n  \
      l2d oracle  <dump.json> <tex_dir> <salida.png> [zoom]\n                                        \
      render con geometría del Core oficial\n  \
      l2d model3  <archivo.model3.json>     manifiesto del modelo\n  \
@@ -71,6 +77,62 @@ fn usage() -> String {
      variables:\n  \
      L2D_KF=primero|centro|mediana         elección del keyform de reposo (por defecto mediana)"
         .to_string()
+}
+
+// ---------------------------------------------------------------- edit
+
+/// Valida un `l2d-model/1` contra su `.moc3` y aplica los desplazamientos sobre la geometría de
+/// reposo del archivo. No abre navegador: es la prueba de que el formato se sostiene en Rust.
+fn edit_cmd(ruta_l2d: &str, ruta_moc: &str) -> Result<(), Box<dyn Error>> {
+    let texto = std::fs::read_to_string(ruta_l2d)?;
+    let bytes = std::fs::read(ruta_moc)?;
+    let m = moc3::Moc3::parse(&bytes)?;
+    let b = m.body()?;
+    let doc = edit::Documento::desde_json(&texto)?;
+
+    println!("documento    {ruta_l2d}");
+    println!("formato      {}", doc.formato);
+    println!(
+        "modelo       {}",
+        if doc.modelo.is_empty() { "(sin nombre)" } else { doc.modelo.as_str() }
+    );
+    // El origen va primero: sin él los índices de vértice no significan nada.
+    doc.verificar_origen(&bytes)?;
+    println!(
+        "origen       {ruta_moc} ({} bytes, huella {}) — coincide",
+        doc.origen.bytes, doc.origen.huella
+    );
+    doc.validar(&b)?;
+
+    if doc.esta_vacio() {
+        println!("\nsin cambios: el documento no toca el modelo");
+    } else {
+        println!("\nparámetros   {} fuera de reposo", doc.parametros.len());
+        for (id, v) in &doc.parametros {
+            println!("  {id:<20} {v:.4}");
+        }
+        println!("partes       {}", doc.partes.len());
+        for (id, visible) in &doc.partes {
+            println!("  {id:<20} {}", if *visible { "visible" } else { "oculta" });
+        }
+        println!(
+            "vértices     {} desplazamientos en {} mallas",
+            doc.vertices.len(),
+            doc.por_malla().len()
+        );
+        for (malla, n) in doc.por_malla() {
+            println!("  {malla:<20} {n} vértice(s)");
+        }
+    }
+
+    let mut posiciones: Vec<Vec<f32>> = b
+        .art_meshes
+        .iter()
+        .map(|malla| vec![0.0; malla.vertex_count as usize * 2])
+        .collect();
+    let n = doc.aplicar(&b, &mut posiciones)?;
+    println!("\naplicado     {n} vértice(s) sobre la geometría de reposo, sin error");
+    Ok(())
 }
 
 // ---------------------------------------------------------------- inspect

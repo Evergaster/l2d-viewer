@@ -1,0 +1,11 @@
+[package]
+name = "edit"
+description = "Lector y validador del formato de modelo editado l2d-model/1"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moc3 = { path = "../moc3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

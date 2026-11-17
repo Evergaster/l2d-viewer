@@ -48,6 +48,11 @@
   <button id="loadbtn">Cargar .json</button>
   <input type="file" id="loadfile" accept=".json,application/json" hidden>
   <div id="hint2" style="color:#6b7480;font-size:11px;margin-top:8px"></div>
+  <h1 style="margin-top:16px">Modelo</h1>
+  <button id="saveModel">Guardar .l2d</button>
+  <button id="loadModel">Abrir .l2d</button>
+  <input type="file" id="modelfile" accept=".l2d,application/json" hidden>
+  <div id="hint3" style="color:#6b7480;font-size:11px;margin-top:8px"></div>
   <div id="hint">Prototipo: geometría y deformación por el Core oficial;
     rasterizado propio en WebGL. Modelos de muestra de Live2D.</div>
 </div>
@@ -144,6 +149,24 @@ const mCanvas = gl.getUniformLocation(maskProg, 'uCanvas');
 const mSize = gl.getUniformLocation(maskProg, 'uSize');
 const mTexel = gl.getUniformLocation(maskProg, 'uTexel');
 
+// FNV-1a de 64 bits sobre los bytes del `.moc3`: la misma cuenta que hace Rust en
+// `crates/edit` (spec/02-formato-modelo.md). Ata el archivo de cambios a su modelo.
+function huella(bytes) {
+  let h = 0xcbf29ce484222325n;
+  const primo = 0x100000001b3n, mascara = 0xffffffffffffffffn;
+  for (let i = 0; i < bytes.length; i++) {
+    h = ((h ^ BigInt(bytes[i])) * primo) & mascara;
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+// Huella rápida de 32 bits para comparar framebuffers (2,3 M de bytes: BigInt es demasiado lento).
+function huella32(bytes) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 16777619) >>> 0;
+  return h.toString(16).padStart(8, '0');
+}
+
 async function loadImage(url) {
   // createImageBitmap decodifica fuera del hilo de pintado; `img.decode()` se queda
   // colgado cuando la pestaña no está pintando (ventana oculta o automatización).
@@ -169,8 +192,9 @@ let model, P, canvasInfo, items = [], uvsAll = [];
     window.__paso = 'core';
     const Core = await cargarCore();
     window.__paso = 'moc3';
-    const buf = await (await fetch(RES + MODEL + '.moc3')).arrayBuffer();
-    const moc = Core.Moc.fromArrayBuffer(buf);
+    mocBuf = await (await fetch(RES + MODEL + '.moc3')).arrayBuffer();
+    mocHuella = huella(new Uint8Array(mocBuf));
+    const moc = Core.Moc.fromArrayBuffer(mocBuf);
     model = Core.Model.fromMoc(moc);
     window.__paso = 'modelo';
     P = model.parameters;
@@ -261,16 +285,6 @@ let model, P, canvasInfo, items = [], uvsAll = [];
     window.__esMascara = esMascara;
     window.__porIndice = new Map(items.map(it => [it.i, it]));
 
-    window.__items = items; window.__model = model;
-    window.__render = render;
-    window.__setParam = (n, v) => {
-      const i = Array.from(P.ids).indexOf(n);
-      if (i < 0) return false;
-      P.values[i] = v;
-      const el = document.querySelector(`#sliders input[data-i="${i}"]`);
-      if (el) { el.value = v; const t = document.getElementById('v' + i); if (t) t.textContent = (+v).toFixed(2); }
-      render(); return true;
-    };
     window.__items = items; window.__model = model;
     window.__render = render;
     window.__setParam = (n, v) => {
@@ -400,6 +414,10 @@ let model, P, canvasInfo, items = [], uvsAll = [];
         }
       });
     })();
+
+    // Visibilidad de arranque (con PartArmB ya oculta): solo se guarda lo que cambie respecto a esto.
+    const visiblesIniciales = new Map();
+    for (let i = 0; i < model.parts.count; i++) visiblesIniciales.set(i, !ocultas.has(i));
 
     // ---------- animación por claves ----------
     const anim = { keys: [], t: 0, dur: 5, playing: false, raf: 0 };
@@ -547,6 +565,153 @@ let model, P, canvasInfo, items = [], uvsAll = [];
       }
     };
 
+    // ---------- modelo editado: `l2d-model/1` (spec/02-formato-modelo.md) ----------
+    // Se guarda SOLO lo que difiere del modelo base: parámetros fuera de reposo, partes cuya
+    // visibilidad cambió y desplazamientos de vértices. El `.moc3` no se toca.
+    const r6 = x => Math.round(x * 1e6) / 1e6;
+
+    function documentoModelo() {
+      const ids = Array.from(P.ids);
+      const parametros = {};
+      for (let i = 0; i < P.count; i++) {
+        const v = P.values[i];
+        if (Math.abs(v - P.defaultValues[i]) > 1e-4) parametros[ids[i]] = r6(v);
+      }
+      const pids = Array.from(model.parts.ids);
+      const partes = {};
+      for (let i = 0; i < pids.length; i++) {
+        const visible = !ocultas.has(i);
+        if (visible !== visiblesIniciales.get(i)) partes[pids[i]] = visible;
+      }
+      const mallaId = Array.from(model.drawables.ids);
+      const vertices = [];
+      for (const [k, d] of deltas) {
+        if (Math.abs(d[0]) < 1e-6 && Math.abs(d[1]) < 1e-6) continue;
+        const [di, vi] = k.split(':').map(Number);
+        vertices.push({ malla: mallaId[di], vertice: vi, dx: r6(d[0]), dy: r6(d[1]) });
+      }
+      vertices.sort((a, b) => a.malla.localeCompare(b.malla) || a.vertice - b.vertice);
+      return {
+        formato: 'l2d-model/1',
+        modelo: MODEL,
+        origen: { archivo: MODEL + '.moc3', bytes: mocBuf.byteLength, huella: mocHuella },
+        parametros, partes, vertices,
+      };
+    }
+
+    // Carga todo o nada: se valida entero antes de tocar el modelo abierto.
+    function aplicarModelo(doc) {
+      if (!doc || doc.formato !== 'l2d-model/1') {
+        throw new Error(`formato «${doc && doc.formato}»: esperaba l2d-model/1`);
+      }
+      if (!doc.origen || !doc.origen.huella) {
+        throw new Error('el archivo no declara el .moc3 de origen (origen.huella)');
+      }
+      if (+doc.origen.bytes !== mocBuf.byteLength) {
+        throw new Error(`el archivo declara ${doc.origen.bytes} bytes y ${MODEL}.moc3 tiene ${mocBuf.byteLength}`);
+      }
+      if (String(doc.origen.huella).toLowerCase() !== mocHuella) {
+        throw new Error(`huella «${doc.origen.huella}» en el archivo, «${mocHuella}» en ${MODEL}.moc3: es otro modelo`);
+      }
+
+      const ids = Array.from(P.ids);
+      const pids = Array.from(model.parts.ids);
+      const mallaId = Array.from(model.drawables.ids);
+      const nVerts = mallaId.map((_, i) => model.drawables.vertexPositions[i].length / 2);
+
+      // 1) validar sin aplicar
+      const nuevosParams = [];
+      for (const [id, v] of Object.entries(doc.parametros || {})) {
+        const i = ids.indexOf(id);
+        if (i < 0) throw new Error(`parámetro «${id}» no existe en el modelo`);
+        if (!Number.isFinite(+v)) throw new Error(`parámetro «${id}» con valor inválido: ${v}`);
+        nuevosParams.push([i, +v]);
+      }
+      const nuevasPartes = [];
+      for (const [id, visible] of Object.entries(doc.partes || {})) {
+        const i = pids.indexOf(id);
+        if (i < 0) throw new Error(`parte «${id}» no existe en el modelo`);
+        nuevasPartes.push([i, !!visible]);
+      }
+      const nuevosDeltas = new Map();
+      for (const d of doc.vertices || []) {
+        const di = mallaId.indexOf(d.malla);
+        if (di < 0) throw new Error(`malla «${d.malla}» no existe en el modelo`);
+        const vi = +d.vertice;
+        if (!Number.isInteger(vi) || vi < 0 || vi >= nVerts[di]) {
+          throw new Error(`«${d.malla}» tiene ${nVerts[di]} vértices y el archivo mueve el ${d.vertice}`);
+        }
+        if (!Number.isFinite(+d.dx) || !Number.isFinite(+d.dy)) {
+          throw new Error(`«${d.malla}» vértice ${vi}: desplazamiento inválido`);
+        }
+        nuevosDeltas.set(di + ':' + vi, [+d.dx, +d.dy]);
+      }
+
+      // 2) aplicar: primero el modelo vuelve a su estado base (el archivo describe el estado
+      //    editado completo, no un parche incremental), después entran sus cambios.
+      for (let i = 0; i < P.count; i++) P.values[i] = P.defaultValues[i];
+      ocultas.clear();
+      for (const [i, visible] of visiblesIniciales) if (!visible) ocultas.add(i);
+      deltas.clear();
+      document.querySelectorAll('#parts input[data-p]').forEach(cb => {
+        cb.checked = visiblesIniciales.get(+cb.dataset.p);
+      });
+
+      for (const [i, v] of nuevosParams) P.values[i] = v;
+      for (const [i, visible] of nuevasPartes) {
+        if (visible) ocultas.delete(i); else ocultas.add(i);
+        const cb = document.querySelector(`#parts input[data-p="${i}"]`);
+        if (cb) cb.checked = visible;
+      }
+      for (const [k, v] of nuevosDeltas) deltas.set(k, v);
+
+      render(); pintarTimeline(); pintarNodos();
+      return { parametros: nuevosParams.length, partes: nuevasPartes.length, vertices: nuevosDeltas.size };
+    }
+
+    window.__documentoModelo = documentoModelo;
+    window.__aplicarModelo = aplicarModelo;
+    // Huella del framebuffer: la prueba de que reabrir deja los MISMOS píxeles.
+    window.__huellaPixeles = () => {
+      render();
+      const px = new Uint8Array(cv.width * cv.height * 4);
+      gl.readPixels(0, 0, cv.width, cv.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return huella32(px);
+    };
+    window.__estado = () => ({
+      huellaMoc: mocHuella,
+      parametros: Array.from(P.values),
+      ocultas: Array.from(ocultas).sort((a, b) => a - b),
+      deltas: Array.from(deltas.entries()).sort((a, b) => a[0].localeCompare(b[0])),
+      pixeles: window.__huellaPixeles(),
+    });
+
+    $('saveModel').onclick = () => {
+      const doc = documentoModelo();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+      a.download = MODEL + '.l2d';
+      a.click();
+      $('hint3').textContent = `guardado ${a.download}: ${Object.keys(doc.parametros).length} parámetros, ` +
+        `${Object.keys(doc.partes).length} partes, ${doc.vertices.length} vértices`;
+    };
+
+    $('loadModel').onclick = () => $('modelfile').click();
+    $('modelfile').onchange = async ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';                 // permite volver a elegir el mismo archivo
+      if (!f) return;
+      try {
+        const doc = JSON.parse(await f.text());
+        const r = aplicarModelo(doc);
+        $('hint3').textContent = `abierto ${f.name}: ${r.parametros} parámetros, ` +
+          `${r.partes} partes, ${r.vertices} vértices`;
+      } catch (e) {
+        $('hint3').textContent = 'error al abrir: ' + e.message;
+        console.error(e);
+      }
+    };
+
     $('del').onclick = () => {
       const t = +($('time').value);
       const i = anim.keys.findIndex(k => Math.abs(k.t - t) < 1e-3);
@@ -674,6 +839,8 @@ function render() {
 // `textures` se rellena en el arranque; se declara aquí para que render() lo vea.
 var textures = [];
 var deltas = new Map();   // desplazamientos "malla:vértice" -> [dx,dy]
+var mocBuf = null;        // bytes del .moc3 abierto: hacen falta para la huella del origen
+var mocHuella = '';
 </script>
 </body>
 </html>

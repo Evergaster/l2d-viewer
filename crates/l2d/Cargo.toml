@@ -13,4 +13,5 @@ path = "src/main.rs"
 moc3 = { path = "../moc3" }
 model3 = { path = "../model3" }
 raster = { path = "../raster" }
+edit = { path = "../edit" }
 serde_json = "1"

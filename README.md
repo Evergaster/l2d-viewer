@@ -20,7 +20,8 @@ y del *comportamiento*, no del código.
 | **Evaluador propio (deformadores warp/rotation)** | ⬜ **bloqueador del visor independiente** |
 | Editor: sliders, vértices, capas, máscaras, claves, timeline, export | ✅ prototipo funcional (sobre el Core) |
 | Cargar lo exportado y borrar claves (ida y vuelta de `l2d-anim/1`) | ✅ verificado en navegador |
-| Guardar el modelo editado | ⬜ |
+| Guardar el modelo editado (`l2d-model/1`) y reabrirlo | ✅ verificado en navegador (`docs/14`) |
+| Validar un `.l2d` desde Rust (`l2d edit`) | ✅ |
 | `draw_order_group`, ventana nativa | ⬜ |
 
 > Estado real: lector de formato sólido, renderizador de geometría correcto y un **editor usable**
@@ -28,10 +29,11 @@ y del *comportamiento*, no del código.
 > Cierre del tramo editor y siguiente paso: `docs/10-cierre-del-editor.md`.
 
 ```bash
-cargo test                              # 12 pruebas + 1 doctest
+cargo test                              # 24 pruebas + 1 doctest
 cargo run -p l2d -- render modelo.moc3 textura.png out.png 0.3
 cargo run -p l2d -- body modelo.moc3    # partes, mallas, parámetros
 cargo run -p l2d -- params modelo.moc3  # parámetros reales con min/max/defecto
+cargo run -p l2d -- edit modelo.l2d modelo.moc3   # valida el modelo editado
 cargo run -p l2d -- inspect modelo.moc3
 tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 ```
@@ -47,7 +49,12 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 7. `docs/07-cierre-de-fase.md` — cierre de la fase de investigación del formato.
 8. `docs/08-editor-arquitectura.md` — arquitectura del editor e hitos H1–H5.
 9. `docs/09-sdk-sin-algoritmo.md` — por qué el SDK no trae el algoritmo de deformación.
-10. `docs/10-cierre-del-editor.md` — **el estado de hoy**: qué hay, qué no, cómo retomar.
+10. `docs/10-cierre-del-editor.md` — el estado del editor al 14 nov: qué hay, qué no, cómo retomar.
+11. `docs/11-cargar-animacion.md` — ida y vuelta de `l2d-anim/1` en el editor.
+12. `docs/12-plan-deformacion.md` — plan del evaluador propio (warp/rotation).
+13. `docs/13-formulas-medidas.md` — fórmulas verificadas de la deformación y lo que sigue abierto.
+14. `docs/14-guardar-modelo.md` — **guardar el modelo** (`l2d-model/1`), con la verificación en navegador.
+- `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
 
@@ -163,7 +170,24 @@ rechazan con el motivo exacto y no tocan la animación que estaba abierta.
 
 ![cargar](docs/editor-cargar.png)
 
-Lo que falta: **guardar el modelo** editado. Ver `docs/08-editor-arquitectura.md`.
+### Guardar el modelo
+
+Panel **Modelo**: **Guardar .l2d** escribe un `l2d-model/1` (`spec/02-formato-modelo.md`) con **solo
+lo que cambió** —parámetros fuera de reposo, partes ocultas o mostradas y desplazamientos de
+vértices— y **Abrir .l2d** lo vuelve a aplicar. El `.moc3` nunca se reescribe.
+
+El documento se ata a su modelo por tamaño y huella FNV-1a 64 del `.moc3`: abrir el `.l2d` de Hiyori
+sobre Wanko se rechaza con los dos valores en el mensaje, porque los índices de vértice no significan
+lo mismo en otro archivo. La carga valida el archivo **entero** antes de tocar nada, y devuelve el
+modelo a su estado base antes de aplicar, así que un archivo vacío deja el modelo intacto.
+
+Verificado en navegador: tres cambios hechos con la UI (slider, casilla de parte, arrastre de vértice)
+salen en el archivo, y tras reabrir con el `input` real el framebuffer da **la misma huella de
+píxeles**. Detalle y tabla de rechazos en `docs/14-guardar-modelo.md`.
+
+```bash
+cargo run -p l2d -- edit modelo.l2d modelo.moc3   # válida sin navegador
+```
 
 ## Ramas
 
