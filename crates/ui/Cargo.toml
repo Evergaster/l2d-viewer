@@ -1,0 +1,15 @@
+[package]
+name = "l2d-ui"
+description = "Visor con interfaz para modelos Live2D, sobre el motor propio (sin Core)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "l2d-ui"
+path = "src/main.rs"
+
+[dependencies]
+view = { path = "../view" }
+raster = { path = "../raster" }
+iced = { version = "0.14", features = ["tokio", "advanced", "image"] }

@@ -22,6 +22,7 @@ y del *comportamiento*, no del código.
 | Cargar lo exportado y borrar claves (ida y vuelta de `l2d-anim/1`) | ✅ verificado en navegador |
 | Guardar el modelo editado (`l2d-model/1`) y reabrirlo | ✅ verificado en navegador (`docs/14`) |
 | Validar un `.l2d` desde Rust (`l2d edit`) | ✅ |
+| **Visor con interfaz** sobre el motor propio (`l2d-ui`) | ✅ ventana con deslizadores, sin Core (`docs/17`) |
 | `draw_order_group`, ventana nativa | ⬜ |
 
 > Estado real: lector de formato sólido, renderizador de geometría correcto y un **editor usable**
@@ -35,6 +36,8 @@ cargo run -p l2d -- body modelo.moc3    # partes, mallas, parámetros
 cargo run -p l2d -- params modelo.moc3  # parámetros reales con min/max/defecto
 cargo run -p l2d -- edit modelo.l2d modelo.moc3   # valida el modelo editado
 cargo run -p l2d -- pose modelo.moc3 --oraculo dump.json   # evalúa con el motor propio
+cargo run -p l2d -- ver  modelo.moc3 out.png --ancho 700   # dibuja la pose, sin Core
+tools/visor.sh                                          # abre el visor (interfaz)
 cargo run -p l2d -- inspect modelo.moc3
 tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 ```
@@ -57,6 +60,7 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 14. `docs/14-guardar-modelo.md` — **guardar el modelo** (`l2d-model/1`), con la verificación en navegador.
 15. `docs/15-motor-en-rust.md` — el evaluador propio en Rust y cuánto acertaba antes (12/134).
 16. `docs/16-motor-cerrado.md` — **el motor cerrado**: composición + selección con pesos, 134/134.
+17. `docs/17-interfaz.md` — el visor con interfaz (`l2d-ui`) y los tres defectos que salieron al dibujar.
 - `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
@@ -204,6 +208,16 @@ La deformación se **compone** deformador a deformador —cada uno con su padre,
 escala y sondeo del ángulo— y los keyforms se **interpolan** con pesos; eso era lo que faltaba
 (`docs/16-motor-cerrado.md`). `--malla ID` imprime la cadena, el keyform y su peso en cada
 eslabón y el bbox tras cada paso.
+
+## Visor con interfaz
+
+```bash
+tools/visor.sh                     # Hiyori; tools/visor.sh ruta/modelo.moc3 para otro
+```
+
+Ventana con un deslizador por parámetro, «Volver a reposo», «Guardar PNG» y tema claro/oscuro.
+Dibuja el motor propio en CPU (`crates/pose` + `crates/raster`), así que **no carga el Core** y no
+depende del EGL de la tarjeta. Detalle y pendientes: `docs/17-interfaz.md`.
 
 ## Ramas
 

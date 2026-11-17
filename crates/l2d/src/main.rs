@@ -2,6 +2,7 @@
 //!
 //!   l2d inspect <archivo.moc3>     cabecera, canvas, conteos y secciones
 //!   l2d model3  <archivo.json>     manifiesto del modelo
+//!   l2d ver     <archivo.moc3> <salida.png>  dibuja la pose con el motor propio, sin Core
 //!   l2d pose    <archivo.moc3>     evalúa la pose con el motor propio (opcional --oraculo)
 //!   l2d demo    [salida.png]       rasteriza una malla deformada (prueba del pipeline)
 
@@ -42,6 +43,7 @@ fn main() {
             }
             _ => Err("uso: l2d render <modelo.moc3> <textura.png> <salida.png> [escala]".into()),
         },
+        Some("ver") => ver_cmd(&args[1..]),
         Some("pose") => pose_cmd(&args[1..]),
         Some("edit") => match (args.get(1), args.get(2)) {
             (Some(l2d), Some(moc)) => edit_cmd(l2d, moc),
@@ -81,6 +83,62 @@ fn usage() -> String {
      variables:\n  \
      L2D_KF=primero|centro|mediana         elección del keyform de reposo (por defecto mediana)"
         .to_string()
+}
+
+// ---------------------------------------------------------------- ver
+
+/// Dibuja una pose con el motor propio (`pose` + `view`) y la guarda como PNG.
+///
+/// Es el visor independiente: no carga el Core de Live2D en ningún momento.
+fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let Some(ruta) = args.first() else {
+        return Err("uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--param Nombre=valor]".into());
+    };
+    let Some(salida) = args.get(1) else {
+        return Err("falta la ruta de salida (.png)".into());
+    };
+    let mut ancho = 700u32;
+    let mut valores: Vec<(String, f32)> = Vec::new();
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--ancho" => {
+                ancho = args.get(i + 1).ok_or("--ancho necesita un número")?.parse()?;
+                i += 2;
+            }
+            "--param" => {
+                if let Some(par) = args.get(i + 1) {
+                    let (nombre, valor) = par.split_once('=').ok_or("--param espera Nombre=valor")?;
+                    valores.push((nombre.to_string(), valor.parse::<f32>()?));
+                }
+                i += 2;
+            }
+            otro => return Err(format!("opción desconocida: {otro}").into()),
+        }
+    }
+
+    let t0 = std::time::Instant::now();
+    let vista = view::Vista::cargar(ruta)?;
+    let t1 = std::time::Instant::now();
+    let mut v = vista.valores_iniciales();
+    for (nombre, valor) in &valores {
+        let p = vista
+            .parametros
+            .iter()
+            .position(|x| &x.id == nombre)
+            .ok_or_else(|| format!("parámetro «{nombre}» no existe en el modelo"))?;
+        v[p] = *valor;
+    }
+    let canvas = vista.render(&v, ancho);
+    let t2 = std::time::Instant::now();
+    canvas.save_png(salida)?;
+
+    println!("modelo       {} ({} mallas, {} texturas)", vista.nombre, vista.body.art_meshes.len(), vista.texturas.len());
+    println!("lienzo       {} × {}  →  {} × {}", vista.lienzo.0, vista.lienzo.1, canvas.width, canvas.height);
+    println!("carga        {} ms", t1.duration_since(t0).as_millis());
+    println!("dibujo       {} ms", t2.duration_since(t1).as_millis());
+    println!("salida       {salida}");
+    Ok(())
 }
 
 // ---------------------------------------------------------------- pose

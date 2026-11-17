@@ -15,4 +15,5 @@ model3 = { path = "../model3" }
 raster = { path = "../raster" }
 edit = { path = "../edit" }
 pose = { path = "../pose" }
+view = { path = "../view" }
 serde_json = "1"
