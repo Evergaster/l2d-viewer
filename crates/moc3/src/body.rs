@@ -170,6 +170,34 @@ pub struct Parameter {
     pub default: f32,
 }
 
+/// Un grupo de dibujo: define el **orden base** de las mallas cuando las profundidades empatan.
+///
+/// La especificación no oficial (`AyagamiDev/docs`) lo describe así: las mallas se pintan
+/// ordenadas por profundidad, de mayor a menor (fondo a frente); como la ordenación es estable y
+/// las profundidades se redondean a entero, hacen falta grupos para declarar el orden base. El
+/// grupo 0 es la raíz y sus items van **de fondo a frente**.
+#[derive(Debug, Clone, Default)]
+pub struct GrupoDibujo {
+    /// Rango de items dentro de [`Body::objetos_grupo`].
+    pub objetos: (usize, usize),
+    /// Mallas totales del subárbol, según el archivo.
+    pub total_mallas: u32,
+    pub min_depth: i32,
+    pub max_depth: i32,
+}
+
+/// Un item de un grupo de dibujo: o una malla, o un grupo hijo con su parte (que da la
+/// profundidad con la que participa en el padre).
+#[derive(Debug, Clone, Default)]
+pub struct ObjetoGrupo {
+    /// Tipo crudo del archivo (0 = malla, medido; los demás no se usan aquí).
+    pub tipo: i32,
+    /// Índice del objeto de ese tipo (malla o parte).
+    pub indice: i32,
+    /// Grupo hijo, si el item es un grupo.
+    pub grupo_hijo: Option<usize>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Body {
     pub part_ids: Vec<String>,
@@ -191,6 +219,10 @@ pub struct Body {
     pub indices: Vec<i16>,
     /// Índices de malla que actúan como máscara (`drawable_mask.art_mesh_indices`).
     pub drawable_masks: Vec<i32>,
+    /// Grupos de dibujo (`draw_order_group.*`), el 0 es la raíz.
+    pub grupos: Vec<GrupoDibujo>,
+    /// Items de todos los grupos (`draw_order_group_object.*`).
+    pub objetos_grupo: Vec<ObjetoGrupo>,
 }
 
 // ---------------------------------------------------------------- lectura
@@ -363,6 +395,39 @@ impl Moc3 {
 
         let part_draw_order = self.read_f32_section("part_keyform.draw_orders")?;
 
+        // Grupos de dibujo: cinco tablas por grupo y tres por item. El orden del archivo es el
+        // desempate cuando dos mallas comparten profundidad (docs/20).
+        let grupo_begin = self.read_i32_section("draw_order_group.object_begin_indices")?;
+        let grupo_cuenta = self.read_i32_section("draw_order_group.object_counts")?;
+        let grupo_total = self.read_i32_section("draw_order_group.object_total_counts")?;
+        let grupo_min = self.read_i32_section("draw_order_group.min_draw_orders")?;
+        let grupo_max = self.read_i32_section("draw_order_group.max_draw_orders")?;
+        let objeto_tipo = self.read_i32_section("draw_order_group_object.types")?;
+        let objeto_indice = self.read_i32_section("draw_order_group_object.indices")?;
+        let objeto_grupo = self.read_i32_section("draw_order_group_object.group_indices")?;
+
+        let mut objetos_grupo = Vec::with_capacity(objeto_tipo.len());
+        for i in 0..objeto_tipo.len() {
+            let hijo = objeto_grupo.get(i).copied().unwrap_or(-1);
+            objetos_grupo.push(ObjetoGrupo {
+                tipo: objeto_tipo[i],
+                indice: objeto_indice.get(i).copied().unwrap_or(-1),
+                // negativo = el item no es un grupo
+                grupo_hijo: if hijo >= 0 { Some(hijo as usize) } else { None },
+            });
+        }
+        let mut grupos = Vec::with_capacity(grupo_begin.len());
+        for i in 0..grupo_begin.len() {
+            let desde = grupo_begin[i].max(0) as usize;
+            let cuantos = grupo_cuenta.get(i).copied().unwrap_or(0).max(0) as usize;
+            grupos.push(GrupoDibujo {
+                objetos: (desde, (desde + cuantos).min(objetos_grupo.len())),
+                total_mallas: grupo_total.get(i).copied().unwrap_or(0).max(0) as u32,
+                min_depth: grupo_min.get(i).copied().unwrap_or(0),
+                max_depth: grupo_max.get(i).copied().unwrap_or(0),
+            });
+        }
+
         Ok(Body {
             part_ids,
             part_visible,
@@ -380,6 +445,8 @@ impl Moc3 {
             uvs,
             indices,
             drawable_masks,
+            grupos,
+            objetos_grupo,
         })
     }
 

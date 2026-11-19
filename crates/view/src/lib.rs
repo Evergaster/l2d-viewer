@@ -28,6 +28,23 @@ pub struct Parametro {
     pub defecto: f32,
 }
 
+/// Cómo se decide el orden de pintado de las mallas.
+///
+/// La especificación no oficial dice que en cada grupo de dibujo los items se ordenan **por
+/// profundidad**, y el orden del archivo (`draw_order_group`) es el orden **base** cuando las
+/// profundidades empatan (se redondean a entero, así que los empates son normales). `Grupos` es
+/// exactamente eso: profundidad, y el árbol solo como desempate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Orden {
+    /// Profundidad de la parte + profundidad de la malla / 10000, empate por índice de malla.
+    /// Es el orden que el visor usaba antes de leer los grupos: medido contra el Core, queda a
+    /// 38,5 de diferencia media; el de [`Orden::Arbol`] a 19,4.
+    Profundidad,
+    /// Profundidad con el árbol de grupos del archivo como desempate, que es lo que dice la
+    /// especificación. **Es el orden por defecto.**
+    Arbol,
+}
+
 /// Encuadre del dibujo: qué parte del lienzo del modelo ocupa la ventana.
 ///
 /// Existe porque a 560 px el detalle fino (pestañas, dedos, bordes del pelo) no se juzga. El zoom
@@ -84,6 +101,8 @@ pub struct Vista {
     pub partes: Vec<String>,
     /// Nombre del modelo (el del archivo).
     pub nombre: String,
+    /// Mallas de fondo a frente según los grupos de dibujo del archivo (vacíos si no los declara).
+    pub orden_arbol: Vec<usize>,
 }
 
 impl Vista {
@@ -167,6 +186,7 @@ impl Vista {
             .to_string();
 
         let partes = bnd_partes(&body);
+        let orden_arbol = orden_por_grupos(&body);
         Ok(Self {
             modelo,
             bnd,
@@ -182,6 +202,7 @@ impl Vista {
             parametros,
             partes,
             nombre,
+            orden_arbol,
         })
     }
 
@@ -227,6 +248,19 @@ impl Vista {
         ancho_px: u32,
         ocultas: &[bool],
         encuadre: Encuadre,
+    ) -> raster::Canvas {
+        self.render_orden(valores, ancho_px, ocultas, encuadre, Orden::Arbol)
+    }
+
+    /// El dibujo con un orden de pintado elegido a mano. Es la sonda con la que se compara el
+    /// orden por profundidad contra el árbol de grupos del archivo.
+    pub fn render_orden(
+        &self,
+        valores: &[f32],
+        ancho_px: u32,
+        ocultas: &[bool],
+        encuadre: Encuadre,
+        orden_pintado: Orden,
     ) -> raster::Canvas {
         let (cw, ch) = self.lienzo;
         let zoom = if encuadre.zoom.is_finite() && encuadre.zoom > 0.0 {
@@ -445,14 +479,31 @@ impl Vista {
             }
         };
 
-        let mut orden: Vec<usize> = (0..n).filter(|i| listos[*i].is_some()).collect();
-        orden.sort_by(|a, b| {
+        let por_profundidad = |a: &usize, b: &usize| {
             let (oa, ob) = (
                 listos[*a].as_ref().map(|x| x.orden).unwrap_or(0.0),
                 listos[*b].as_ref().map(|x| x.orden).unwrap_or(0.0),
             );
             oa.partial_cmp(&ob).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        };
+        let mut orden: Vec<usize> = (0..n).filter(|i| listos[*i].is_some()).collect();
+        match orden_pintado {
+            Orden::Profundidad => orden.sort_by(por_profundidad),
+            Orden::Arbol => {
+                // Posición de cada malla en el árbol del archivo: es el desempate cuando dos
+                // mallas comparten profundidad. Las que el archivo no lista quedan al final del
+                // desempate (usize::MAX) y conservan el orden por índice.
+                let mut posicion = vec![usize::MAX; n];
+                for (k, malla) in self.orden_arbol.iter().enumerate() {
+                    if let Some(p) = posicion.get_mut(*malla) {
+                        *p = k;
+                    }
+                }
+                orden.sort_by(|a, b| {
+                    por_profundidad(a, b).then_with(|| posicion[*a].cmp(&posicion[*b]))
+                });
+            }
+        }
 
         for i in orden {
             if es_mascara[i] {
@@ -522,4 +573,35 @@ impl Vista {
 /// Ids de las partes del modelo (capas), para listarlas en una interfaz.
 fn bnd_partes(body: &Body) -> Vec<String> {
     body.part_ids.clone()
+}
+
+/// Aplana el árbol de grupos de dibujo en el orden de pintado (fondo a frente).
+///
+/// El grupo 0 es la raíz y cada item es una malla (tipo 0) o un grupo hijo. Un archivo sin grupos
+/// devuelve una lista vacía y el visor cae al orden por profundidad.
+fn orden_por_grupos(body: &Body) -> Vec<usize> {
+    let mut salida = Vec::new();
+    if body.grupos.is_empty() {
+        return salida;
+    }
+    fn recorrer(body: &Body, grupo: usize, salida: &mut Vec<usize>, hondura: usize) {
+        if hondura > 32 {
+            return; // un ciclo en el archivo no debe colgar el dibujo
+        }
+        let Some(g) = body.grupos.get(grupo) else {
+            return;
+        };
+        for i in g.objetos.0..g.objetos.1 {
+            let Some(o) = body.objetos_grupo.get(i) else {
+                continue;
+            };
+            match o.grupo_hijo {
+                Some(hijo) => recorrer(body, hijo, salida, hondura + 1),
+                None if o.tipo == 0 && o.indice >= 0 => salida.push(o.indice as usize),
+                None => {}
+            }
+        }
+    }
+    recorrer(body, 0, &mut salida, 0);
+    salida
 }
