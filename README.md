@@ -67,6 +67,7 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 18. `docs/18-animacion.md` — abrir archivos y **reproducir `l2d-anim/1`**, con el rendimiento medido y el halo del borde descartado como defecto.
 19. `docs/19-encuadre.md` — **zoom y centro de cámara**, con el eje que costó una vuelta.
 20. `docs/20-orden-de-dibujo.md` — el **orden de dibujo** por grupos del archivo, medido contra el Core.
+21. `docs/21-diferencia-con-el-core.md` — el **8,6 % restante**: supermuestreo (`--ssaa`) y las hipótesis descartadas con números.
 - `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
@@ -230,6 +231,7 @@ y la animación se reproduce en bucle con «Pausar»/«Detener».
 L2D_UI_LOG=1 tools/visor.sh                          # ms de dibujo cada 24 cuadros
 cargo run --release -p view --example banco -- <modelo.moc3>   # ms por pose a cada ancho
 l2d ver <modelo.moc3> /tmp/cara.png --zoom 4 --centro 1488,700  # primer plano del rostro
+l2d ver <modelo.moc3> /tmp/cara.png --zoom 6 --centro 1420,760 --ssaa 2  # con supermuestreo
 l2d-ui <modelo.moc3> --zoom 4 --centro 1488,700                # la ventana, ya en la cara
 cargo run --release -p moc3 --example grupos -- <modelo.moc3>  # árbol de grupos de dibujo
 cargo run --release -p view --example comparar -- <modelo.moc3> 560  # orden antiguo vs nuevo

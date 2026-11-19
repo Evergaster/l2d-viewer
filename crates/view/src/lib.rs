@@ -252,6 +252,28 @@ impl Vista {
         self.render_orden(valores, ancho_px, ocultas, encuadre, Orden::Arbol)
     }
 
+    /// Igual que [`Vista::render_orden`], pero dibujando a `factor` veces el tamaño y reduciendo
+    /// el resultado (supermuestreo). Es la única forma de tener bordes suaves con un
+    /// rasterizador sin multisample.
+    ///
+    /// Cuesta `factor²` veces más: a 2 ya se nota en un PNG, y para la ventana no se usa.
+    pub fn render_ssaa(
+        &self,
+        valores: &[f32],
+        ancho_px: u32,
+        ocultas: &[bool],
+        encuadre: Encuadre,
+        orden: Orden,
+        factor: u32,
+    ) -> raster::Canvas {
+        let factor = factor.clamp(1, 4);
+        if factor == 1 {
+            return self.render_orden(valores, ancho_px, ocultas, encuadre, orden);
+        }
+        let grande = self.render_orden(valores, ancho_px * factor, ocultas, encuadre, orden);
+        grande.reducir(factor)
+    }
+
     /// El dibujo con un orden de pintado elegido a mano. Es la sonda con la que se compara el
     /// orden por profundidad contra el árbol de grupos del archivo.
     pub fn render_orden(

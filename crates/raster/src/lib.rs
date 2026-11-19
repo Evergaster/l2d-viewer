@@ -93,7 +93,11 @@ impl Texture {
     }
 
     pub fn from_rgba(width: u32, height: u32, pixels: Vec<u8>) -> Self {
-        assert_eq!(pixels.len(), (width * height * 4) as usize, "tamaño de textura");
+        assert_eq!(
+            pixels.len(),
+            (width * height * 4) as usize,
+            "tamaño de textura"
+        );
         Self {
             width,
             height,
@@ -235,8 +239,8 @@ impl Canvas {
         }
 
         let min_x = a.pos[0].min(b.pos[0]).min(c.pos[0]).floor().max(0.0) as u32;
-        let max_x = (a.pos[0].max(b.pos[0]).max(c.pos[0]).ceil() as i64)
-            .clamp(0, self.width as i64) as u32;
+        let max_x =
+            (a.pos[0].max(b.pos[0]).max(c.pos[0]).ceil() as i64).clamp(0, self.width as i64) as u32;
         let min_y = a.pos[1].min(b.pos[1]).min(c.pos[1]).floor().max(0.0) as u32;
         let max_y = (a.pos[1].max(b.pos[1]).max(c.pos[1]).ceil() as i64)
             .clamp(0, self.height as i64) as u32;
@@ -269,7 +273,7 @@ impl Canvas {
                 self.blend_px(x, y, col, mode);
             }
         }
-        }
+    }
 
     /// Quad como dos triángulos, con UVs (0,0)-(1,1).
     pub fn quad(&mut self, x: f32, y: f32, w: f32, h: f32, tex: Option<&Texture>, mode: Blend) {
@@ -279,6 +283,55 @@ impl Canvas {
         let v01 = Vertex::new(x, y + h, 0.0, 1.0);
         self.triangle([v00, v10, v11], tex, mode);
         self.triangle([v00, v11, v01], tex, mode);
+    }
+
+    /// Reduce el lienzo por un factor entero, promediando bloques (supermuestreo).
+    ///
+    /// El promedio se hace en **alfa premultiplicado**: promediar RGB con alfa recta mezcla el
+    /// color de los píxeles transparentes del borde y saca un filo oscuro. Con premultiplicado se
+    /// promedia "cuánta luz aporta cada muestra", y el borde queda del color del trazo con alfa
+    /// parcial, que es lo que hace un multisample de verdad.
+    pub fn reducir(&self, factor: u32) -> Canvas {
+        let factor = factor.max(1);
+        if factor == 1 {
+            return self.clone();
+        }
+        let w = (self.width / factor).max(1);
+        let h = (self.height / factor).max(1);
+        let mut out = Canvas::new(w, h);
+        let n = (factor * factor) as f32;
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = [0.0f32; 4];
+                for dy in 0..factor {
+                    for dx in 0..factor {
+                        let sx = x * factor + dx;
+                        let sy = y * factor + dy;
+                        if sx >= self.width || sy >= self.height {
+                            continue;
+                        }
+                        let i = ((sy * self.width + sx) * 4) as usize;
+                        let a = self.pixels[i + 3] as f32 / 255.0;
+                        acc[0] += self.pixels[i] as f32 / 255.0 * a;
+                        acc[1] += self.pixels[i + 1] as f32 / 255.0 * a;
+                        acc[2] += self.pixels[i + 2] as f32 / 255.0 * a;
+                        acc[3] += a;
+                    }
+                }
+                let a = acc[3] / n;
+                let o = ((y * w + x) * 4) as usize;
+                let rgb = if a > 1e-4 {
+                    [acc[0] / n / a, acc[1] / n / a, acc[2] / n / a]
+                } else {
+                    [0.0, 0.0, 0.0]
+                };
+                out.pixels[o] = (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+                out.pixels[o + 1] = (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+                out.pixels[o + 2] = (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+                out.pixels[o + 3] = (a.clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+        }
+        out
     }
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
@@ -334,7 +387,10 @@ mod tests {
         c.quad(0.0, 0.0, 16.0, 16.0, Some(&tex), Blend::Normal);
         let tl = c.pixel(2, 2);
         let tr = c.pixel(13, 2);
-        assert!(tl[0] > tr[0], "rojo a la izquierda ({tl:?}) y azul a la derecha ({tr:?})");
+        assert!(
+            tl[0] > tr[0],
+            "rojo a la izquierda ({tl:?}) y azul a la derecha ({tr:?})"
+        );
         assert!(tr[2] > tl[2]);
     }
 
@@ -349,14 +405,70 @@ mod tests {
         ];
         c.triangle(v, None, Blend::Normal);
         let p = c.pixel(1, 1);
-        assert!((p[0] as i32 - 128).abs() < 8, "gris medio esperado, hay {p:?}");
+        assert!(
+            (p[0] as i32 - 128).abs() < 8,
+            "gris medio esperado, hay {p:?}"
+        );
     }
 
     #[test]
     fn triangulo_degenerado_no_hace_nada() {
         let mut c = Canvas::new(4, 4);
-        let v = [Vertex::new(1.0, 1.0, 0.0, 0.0), Vertex::new(1.0, 1.0, 0.0, 0.0), Vertex::new(1.0, 1.0, 0.0, 0.0)];
+        let v = [
+            Vertex::new(1.0, 1.0, 0.0, 0.0),
+            Vertex::new(1.0, 1.0, 0.0, 0.0),
+            Vertex::new(1.0, 1.0, 0.0, 0.0),
+        ];
         c.triangle(v, None, Blend::Normal);
         assert_eq!(c.pixel(1, 1)[3], 0);
+    }
+}
+
+#[cfg(test)]
+mod pruebas_reducir {
+    use super::*;
+
+    #[test]
+    fn reducir_uno_no_cambia_nada() {
+        let mut c = Canvas::new(4, 4);
+        c.clear([10, 20, 30, 255]);
+        let r = c.reducir(1);
+        assert_eq!(r.pixels, c.pixels);
+        assert_eq!((r.width, r.height), (4, 4));
+    }
+
+    #[test]
+    fn reducir_dos_promedia_alfa() {
+        // 1 de 4 muestras opaca: el píxel reducido queda a un cuarto de alfa, blanco
+        let mut c = Canvas::new(2, 2);
+        c.clear([0, 0, 0, 0]);
+        c.pixels[0..4].copy_from_slice(&[255, 255, 255, 255]);
+        let r = c.reducir(2);
+        assert_eq!((r.width, r.height), (1, 1));
+        let p = r.pixel(0, 0);
+        assert!((p[3] as i32 - 64).abs() <= 2, "alfa 0.25, hay {p:?}");
+        assert!(p[0] > 240, "el color no se oscurece, hay {p:?}");
+    }
+
+    /// El promedio premultiplicado no arrastra el RGB de los píxeles transparentes: si el borde
+    /// tuviera blanco con alfa 0, promediar a secas dejaría un filo claro.
+    #[test]
+    fn el_borde_no_arrastra_color_de_lo_transparente() {
+        // 2x2: (0,0) rojo opaco; el resto transparente **blanco** (el peor caso: si se promedia
+        // el RGB sin pesarlo por alfa, el resultado sale rosa).
+        let mut c = Canvas::new(2, 2);
+        c.clear([255, 255, 255, 0]);
+        c.pixels[0..4].copy_from_slice(&[200, 0, 0, 255]);
+        let r = c.reducir(2);
+        let p = r.pixel(0, 0);
+        assert!(p[0] > 180 && p[1] < 40 && p[2] < 40, "rojo, no rosa: {p:?}");
+        assert!((p[3] as i32 - 64).abs() <= 2, "alfa 0.25: {p:?}");
+    }
+
+    #[test]
+    fn reducir_no_deforma_el_tamano() {
+        let c = Canvas::new(7, 5);
+        let r = c.reducir(3);
+        assert_eq!((r.width, r.height), (2, 1));
     }
 }

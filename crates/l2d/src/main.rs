@@ -99,7 +99,7 @@ fn usage() -> String {
 fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let Some(ruta) = args.first() else {
         return Err(
-            "uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--zoom N] [--centro X,Y] [--param Nombre=valor] [--ocultar Capa]".into(),
+            "uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--zoom N] [--centro X,Y] [--ssaa N] [--param Nombre=valor] [--ocultar Capa]".into(),
         );
     };
     let Some(salida) = args.get(1) else {
@@ -110,6 +110,10 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut ocultar: Vec<String> = Vec::new();
     let mut zoom: f32 = 1.0;
     let mut centro: Option<(f32, f32)> = None;
+    // Supermuestreo desactivado por defecto: medido contra el Core, a 2× mejora la diferencia de
+    // 19,41 a 18,77 y cuesta 4,5× más tiempo (`docs/21`). Se activa con `--ssaa 2` cuando se
+    // quiere el PNG más suave.
+    let mut ssaa: u32 = 1;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -132,6 +136,13 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
                 if let Some(capa) = args.get(i + 1) {
                     ocultar.push(capa.clone());
                 }
+                i += 2;
+            }
+            "--ssaa" => {
+                ssaa = args
+                    .get(i + 1)
+                    .ok_or("--ssaa necesita un entero (1 = sin supermuestreo)")?
+                    .parse()?;
                 i += 2;
             }
             "--zoom" => {
@@ -178,7 +189,7 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     if let Some((x, y)) = centro {
         encuadre = encuadre.centrado_en(&vista, x, y);
     }
-    let canvas = vista.render_encuadre(&v, ancho, &ocultas, encuadre);
+    let canvas = vista.render_ssaa(&v, ancho, &ocultas, encuadre, view::Orden::Arbol, ssaa);
     let t2 = std::time::Instant::now();
     canvas.save_png(salida)?;
 
