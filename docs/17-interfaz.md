@@ -74,8 +74,9 @@ Ninguno de los dos afecta a la geometría (que sigue medida en 134/134): son def
 
 ## 4. Lo que falta de la interfaz
 
-- **Abrir modelos desde la ventana**: hoy la ruta se pasa por argumento (o se abre con
-  `tools/visor.sh`). Un selector de archivos es el primer añadido natural.
-- **Reproducir `l2d-anim/1`**: el formato existe y el editor lo exporta; el visor aún no lo lee.
+- ~~Abrir modelos desde la ventana~~: **hecho**, selector del sistema (`zenity`). Ver `docs/18`.
+- ~~Reproducir `l2d-anim/1`~~: **hecho**, en bucle y con delta real de reloj. Ver `docs/18`.
+- **De §3.1**: el clamp de UV a medio téxel ya está; el filo claro del borde **no** es del motor —
+  el render del Core oficial tiene el mismo beige (medido en `docs/18` §5).
 - **Editar vértices** desde esta ventana: hoy eso vive en el editor del navegador (`docs/14`),
   que usa el Core. Traerlo aquí exige el rig propio completo, no sólo la pose.

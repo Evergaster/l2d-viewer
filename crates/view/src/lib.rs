@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use moc3::{Body, Moc3};
 use pose::{Bindings, Modelo, Seleccion};
 
+/// Animaciones `l2d-anim/1`: carga, validación e interpolación.
+pub mod anim;
+
 /// Un parámetro del modelo, tal como lo ve una interfaz.
 #[derive(Debug, Clone)]
 pub struct Parametro {
@@ -326,12 +329,31 @@ impl Vista {
 
         let mut canvas = raster::Canvas::new(ancho, alto);
         canvas.clear([0, 0, 0, 0]);
+        // Un solo canvas de máscara, reutilizado. Antes se creaba uno por malla enmascarada: en
+        // Hiyori son decenas, y cada `Canvas::new` reserva y limpia el lienzo completo (1,7 MB a
+        // 560 px), así que la reproducción se comía un núcleo. Medido con `examples/banco.rs`.
+        let mut buf_mascara = raster::Canvas::new(ancho, alto);
 
         let pintar = |canvas: &mut raster::Canvas, r: &Listo, mascara: Option<&raster::Canvas>| {
             let tex = self
                 .texturas
                 .get(r.textura)
                 .or_else(|| self.texturas.first());
+            // Clamp de UV a medio téxel: en u/v exactamente 0 o 1 el bilineal del atlas arrastra
+            // color de la región vecina y deja un filo claro en el pelo y los dedos (docs/17
+            // §3.1). Es la misma regla que el editor aplica en el shader.
+            let (eu, ev) = match tex {
+                Some(t) if t.width > 0 && t.height > 0 => {
+                    (0.5 / t.width as f32, 0.5 / t.height as f32)
+                }
+                _ => (0.0, 0.0),
+            };
+            let ajustar = move |uv: [f32; 2]| -> [f32; 2] {
+                [
+                    uv[0].clamp(eu, (1.0 - eu).max(eu)),
+                    uv[1].clamp(ev, (1.0 - ev).max(ev)),
+                ]
+            };
             for tri in r.indices.chunks_exact(3) {
                 let (a, b, c) = (
                     tri[0].max(0) as usize,
@@ -343,6 +365,7 @@ impl Vista {
                 }
                 let mk = |k: usize| {
                     let (p, uv) = r.verts[k];
+                    let uv = ajustar(uv);
                     let sp = to_screen(p);
                     raster::Vertex::new(sp[0], sp[1], uv[0], uv[1])
                         .with_color(1.0, 1.0, 1.0, r.opacidad)
@@ -370,8 +393,7 @@ impl Vista {
             let mascara = if r.mascaras.is_empty() {
                 None
             } else {
-                let mut mc = raster::Canvas::new(ancho, alto);
-                mc.clear([0, 0, 0, 0]);
+                buf_mascara.clear([0, 0, 0, 0]);
                 for mi in &r.mascaras {
                     // el canvas de máscara usa la textura para el recorte por alfa
                     let Some(mr) = listos[*mi].as_ref() else {
@@ -381,6 +403,18 @@ impl Vista {
                         .texturas
                         .get(mr.textura)
                         .or_else(|| self.texturas.first());
+                    let (eu, ev) = match tex {
+                        Some(t) if t.width > 0 && t.height > 0 => {
+                            (0.5 / t.width as f32, 0.5 / t.height as f32)
+                        }
+                        _ => (0.0, 0.0),
+                    };
+                    let ajustar = move |uv: [f32; 2]| -> [f32; 2] {
+                        [
+                            uv[0].clamp(eu, (1.0 - eu).max(eu)),
+                            uv[1].clamp(ev, (1.0 - ev).max(ev)),
+                        ]
+                    };
                     for tri in mr.indices.chunks_exact(3) {
                         let (a, b, c) = (
                             tri[0].max(0) as usize,
@@ -392,16 +426,22 @@ impl Vista {
                         }
                         let mk = |k: usize| {
                             let (p, uv) = mr.verts[k];
+                            let uv = ajustar(uv);
                             let sp = to_screen(p);
                             raster::Vertex::new(sp[0], sp[1], uv[0], uv[1])
                                 .with_color(1.0, 1.0, 1.0, 1.0)
                         };
-                        mc.triangle_masked([mk(a), mk(b), mk(c)], tex, raster::Blend::Normal, None);
+                        buf_mascara.triangle_masked(
+                            [mk(a), mk(b), mk(c)],
+                            tex,
+                            raster::Blend::Normal,
+                            None,
+                        );
                     }
                 }
-                Some(mc)
+                Some(&buf_mascara)
             };
-            pintar(&mut canvas, r, mascara.as_ref());
+            pintar(&mut canvas, r, mascara);
         }
 
         canvas

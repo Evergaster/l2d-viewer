@@ -1,0 +1,44 @@
+{
+ "formato": "l2d-anim/1",
+ "modelo": "Hiyori",
+ "duracion": 3,
+ "parametros": [
+  "ParamAngleX",
+  "ParamAngleY",
+  "ParamEyeLOpen",
+  "ParamEyeROpen",
+  "ParamMouthOpenY"
+ ],
+ "claves": [
+  {
+   "t": 0.0,
+   "valores": [
+    0,
+    0,
+    1.0,
+    1.0,
+    0.0
+   ]
+  },
+  {
+   "t": 1.5,
+   "valores": [
+    30,
+    -30,
+    0.0,
+    0.0,
+    1.0
+   ]
+  },
+  {
+   "t": 3.0,
+   "valores": [
+    -30,
+    30,
+    1.2,
+    1.2,
+    0.4
+   ]
+  }
+ ]
+}

@@ -11,22 +11,40 @@
 //! 2. **Cada cambio de parámetro redibuja.** A 560 px tarda unas décimas; si algún modelo grande
 //!    lo hace incómodo, el ancho de dibujo es una constante y se baja sin tocar nada más.
 //! 3. **Un botón por cosa**: reposo, guardar PNG. Sin menús ni estados ocultos.
+//! 4. **El selector de archivos es `zenity`**, lanzado en una tarea aparte. No añade dependencias
+//!    (ni GTK, ni portal, ni 30 crates de `rfd`) y en este escritorio ya está instalado. Si un día
+//!    no está, el visor lo dice en el pie en vez de morir.
+//! 5. **La animación manda mientras se reproduce.** Los deslizadores se pueden mover, pero el
+//!    siguiente cuadro los sobrescribe con lo que diga el archivo; al pausar, el estado queda en la
+//!    última pose dibujada y se puede editar a mano desde ahí.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::widget::{
     button, checkbox, column, container, image, row, scrollable, slider, text, Space,
 };
-use iced::{Alignment, Element, Length, Task};
+use iced::{Alignment, Element, Length, Subscription, Task};
 
 /// Ancho al que se dibuja el modelo para la ventana (el PNG se guarda al doble).
 const ANCHO_DIBUJO: u32 = 560;
+/// Ancho durante la reproducción. Medido con `cargo run --release -p view --example banco` y
+/// confirmado dentro del bucle con `L2D_UI_LOG=1`: a 560 px una pose cuesta ~25 ms (40 cuadros/s
+/// de techo) y a 420 px ~29 ms **dentro de la ventana** (más que en el banco porque la caché se
+/// enfría entre cuadros), así que la ventana reproduce a 15 cuadros/s con ~44 % de un núcleo. En
+/// pausa se redibuja a 560 px, que es el ancho de trabajo.
+const ANCHO_ANIMACION: u32 = 420;
 const ANCHO_PANEL: f32 = 300.0;
+/// Cadencia de la reproducción. 15 cuadros/s bastan para juzgar una animación de prueba y dejan
+/// un núcleo libre; con 24 el visor se comía ~75 % de uno.
+const CUADRO_MS: u64 = 66;
 
 fn main() -> iced::Result {
-    let ruta = std::env::args().nth(1);
+    let mut args = std::env::args().skip(1);
+    let ruta = args.next();
+    let anim = args.next();
     iced::application(
-        move || Visor::nuevo(ruta.clone()),
+        move || Visor::nuevo(ruta.clone(), anim.clone()),
         Visor::actualizar,
         Visor::vista,
     )
@@ -38,8 +56,9 @@ fn main() -> iced::Result {
             iced::Theme::Dark
         }
     })
+    .subscription(Visor::suscripcion)
     .window(iced::window::Settings {
-        size: iced::Size::new(1180.0, 820.0),
+        size: iced::Size::new(1180.0, 860.0),
         min_size: Some(iced::Size::new(860.0, 560.0)),
         ..iced::window::Settings::default()
     })
@@ -56,9 +75,20 @@ struct Visor {
     ms: u128,
     claro: bool,
     mensaje: String,
+    /// Animación cargada, ya atada a los parámetros de este modelo.
+    anim: Option<Arc<view::anim::Animacion>>,
+    reproduciendo: bool,
+    /// Instante dentro de la animación, en segundos.
+    t: f32,
+    ultimo_cuadro: Option<Instant>,
+    /// Animación pedida por línea de comandos, para cargarla en cuanto haya modelo.
+    anim_pendiente: Option<String>,
+    /// Diagnóstico: cuadros y milisegundos acumulados de dibujo (con `L2D_UI_LOG=1`).
+    cuadros: u32,
+    ms_acumulados: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Msg {
     Param(usize, f32),
     Capa(usize, bool),
@@ -66,11 +96,21 @@ enum Msg {
     Guardar,
     Tema,
     Imagen(image::Handle, u128),
+    AbrirModelo,
+    ModeloElegido(Option<String>),
+    ModeloCargado(Result<Arc<view::Vista>, String>),
+    AbrirAnimacion,
+    AnimacionElegida(Option<String>),
+    AnimacionCargada(Box<Result<view::anim::Animacion, String>>),
+    Alternar,
+    Detener,
+    Cuadro(Instant),
+    CerrarError,
 }
 
 impl Visor {
-    fn nuevo(ruta: Option<String>) -> (Self, Task<Msg>) {
-        let mut v = Self {
+    fn nuevo(ruta: Option<String>, anim: Option<String>) -> (Self, Task<Msg>) {
+        let v = Self {
             modelo: None,
             valores: Vec::new(),
             ocultas: Vec::new(),
@@ -79,44 +119,126 @@ impl Visor {
             ms: 0,
             claro: false,
             mensaje: String::new(),
+            anim: None,
+            reproduciendo: false,
+            t: 0.0,
+            ultimo_cuadro: None,
+            anim_pendiente: anim,
+            cuadros: 0,
+            ms_acumulados: 0.0,
         };
         match ruta {
-            Some(r) => match view::Vista::cargar(&r) {
-                Ok(vista) => {
-                    v.valores = vista.valores_iniciales();
-                    v.ocultas = vista.ocultas_por_defecto();
-                    v.mensaje = format!(
-                        "{} · {} mallas · {} texturas",
-                        vista.nombre,
-                        vista.body.art_meshes.len(),
-                        vista.texturas.len()
-                    );
-                    v.modelo = Some(Arc::new(vista));
-                    let t = v.redibujar();
-                    return (v, t);
+            Some(r) => (v, visor_cargar(r)),
+            None => (v, Task::none()),
+        }
+    }
+
+    /// El modelo nuevo entra con sus valores de reposo y sin animación heredada.
+    fn poner_modelo(&mut self, r: Result<Arc<view::Vista>, String>) -> Task<Msg> {
+        match r {
+            Ok(vista) => {
+                self.valores = vista.valores_iniciales();
+                self.ocultas = vista.ocultas_por_defecto();
+                self.mensaje = format!(
+                    "{} · {} mallas · {} texturas",
+                    vista.nombre,
+                    vista.body.art_meshes.len(),
+                    vista.texturas.len()
+                );
+                self.modelo = Some(vista);
+                self.anim = None;
+                self.reproduciendo = false;
+                self.t = 0.0;
+                self.ultimo_cuadro = None;
+                self.error = None;
+
+                // Animación pedida por línea de comandos: se carga en cuanto el modelo existe.
+                if let Some(ruta) = self.anim_pendiente.take() {
+                    let ids: Vec<String> = self
+                        .modelo
+                        .as_ref()
+                        .map(|v| v.parametros.iter().map(|p| p.id.clone()).collect())
+                        .unwrap_or_default();
+                    match view::anim::Animacion::cargar(&ruta, &ids) {
+                        Ok(a) => {
+                            self.mensaje = format!("animación: {}", a.resumen());
+                            a.aplicar(0.0, &mut self.valores);
+                            self.anim = Some(Arc::new(a));
+                            self.reproduciendo = true;
+                        }
+                        Err(e) => self.mensaje = format!("animación rechazada: {e}"),
+                    }
                 }
-                Err(e) => v.error = Some(format!("no pude abrir «{r}»: {e}")),
-            },
-            None => {
-                v.error =
-                    Some("pasa la ruta de un modelo: l2d-ui <modelo.moc3>".to_string());
+                self.redibujar()
+            }
+            Err(e) => {
+                self.error = Some(e);
+                Task::none()
             }
         }
-        (v, Task::none())
     }
 
     /// Redibuja con los valores actuales y devuelve la tarea que entrega la imagen.
-    fn redibujar(&self) -> Task<Msg> {
+    ///
+    /// Con `L2D_UI_LOG=1` escribe en stderr cada 24 cuadros el tiempo medio de dibujo: es la
+    /// única forma de saber si el bucle se sostiene sin mirar la ventana.
+    fn redibujar(&mut self) -> Task<Msg> {
         let Some(vista) = self.modelo.clone() else {
             return Task::none();
         };
         let valores = self.valores.clone();
         let ocultas = self.ocultas.clone();
-        let t0 = std::time::Instant::now();
-        let canvas = vista.render(&valores, ANCHO_DIBUJO, &ocultas);
+        let ancho = if self.reproduciendo {
+            ANCHO_ANIMACION
+        } else {
+            ANCHO_DIBUJO
+        };
+        let t0 = Instant::now();
+        let canvas = vista.render(&valores, ancho, &ocultas);
         let ms = t0.elapsed().as_millis();
-        let handle = image::Handle::from_rgba(canvas.width, canvas.height, canvas.pixels.clone());
+
+        self.cuadros += 1;
+        self.ms_acumulados += t0.elapsed().as_secs_f64() * 1000.0;
+        if self.cuadros % 24 == 0 && std::env::var_os("L2D_UI_LOG").is_some() {
+            eprintln!(
+                "l2d-ui: {} cuadros · dibujo medio {:.1} ms · {} px",
+                self.cuadros,
+                self.ms_acumulados / 24.0,
+                ancho
+            );
+            self.ms_acumulados = 0.0;
+        }
+
+        let handle = image::Handle::from_rgba(canvas.width, canvas.height, canvas.pixels);
         Task::done(Msg::Imagen(handle, ms))
+    }
+
+    fn suscripcion(&self) -> Subscription<Msg> {
+        if self.reproduciendo {
+            // `every` entrega el instante del disparo: el delta real sale de ahí, no de suponer
+            // que cada tick llegó a tiempo (con el CPU ocupado llegan tarde y la animación se
+            // arrastraría).
+            iced::time::every(Duration::from_millis(CUADRO_MS)).map(Msg::Cuadro)
+        } else {
+            Subscription::none()
+        }
+    }
+
+    /// Avanza el reloj de la animación y deja los valores de parámetro en esa pose.
+    fn avanzar(&mut self, ahora: Instant) {
+        let Some(anim) = self.anim.clone() else {
+            self.reproduciendo = false;
+            return;
+        };
+        let dt = match self.ultimo_cuadro {
+            Some(prev) => ahora.saturating_duration_since(prev).as_secs_f32(),
+            None => 0.0,
+        };
+        // Un salto grande (ventana minimizada, primer cuadro) no debe saltar media animación.
+        let dt = dt.min(0.25);
+        self.ultimo_cuadro = Some(ahora);
+        self.t = anim.envolver(self.t + dt);
+        anim.aplicar(self.t, &mut self.valores);
     }
 
     fn actualizar(&mut self, msg: Msg) -> Task<Msg> {
@@ -138,6 +260,9 @@ impl Visor {
                     self.valores = vista.valores_iniciales();
                     self.ocultas = vista.ocultas_por_defecto();
                 }
+                self.reproduciendo = false;
+                self.t = 0.0;
+                self.ultimo_cuadro = None;
                 return self.redibujar();
             }
             Msg::Guardar => {
@@ -156,16 +281,99 @@ impl Visor {
                 self.imagen = Some(handle);
                 self.ms = ms;
             }
+            Msg::AbrirModelo => {
+                return Task::perform(
+                    elegir_archivo("Abrir modelo", "Modelos Live2D", "*.moc3"),
+                    Msg::ModeloElegido,
+                );
+            }
+            Msg::ModeloElegido(Some(ruta)) => return visor_cargar(ruta),
+            Msg::ModeloElegido(None) => return Task::none(),
+            Msg::ModeloCargado(r) => return self.poner_modelo(r),
+            Msg::AbrirAnimacion => {
+                if self.modelo.is_none() {
+                    self.mensaje = "abre un modelo antes que la animación".to_string();
+                    return Task::none();
+                }
+                return Task::perform(
+                    elegir_archivo("Abrir animación", "Animación l2d", "*.json"),
+                    Msg::AnimacionElegida,
+                );
+            }
+            Msg::AnimacionElegida(Some(ruta)) => {
+                let Some(vista) = self.modelo.clone() else {
+                    return Task::none();
+                };
+                let ids: Vec<String> = vista.parametros.iter().map(|p| p.id.clone()).collect();
+                return Task::perform(
+                    async move { Box::new(view::anim::Animacion::cargar(&ruta, &ids)) },
+                    Msg::AnimacionCargada,
+                );
+            }
+            Msg::AnimacionElegida(None) => return Task::none(),
+            Msg::AnimacionCargada(r) => match *r {
+                Ok(anim) => {
+                    self.mensaje = format!("animación: {}", anim.resumen());
+                    anim.aplicar(0.0, &mut self.valores);
+                    self.anim = Some(Arc::new(anim));
+                    self.t = 0.0;
+                    self.reproduciendo = true;
+                    self.ultimo_cuadro = None;
+                    self.error = None;
+                    return self.redibujar();
+                }
+                Err(e) => {
+                    // Un archivo rechazado no toca la animación abierta (spec §Reglas).
+                    self.mensaje = format!("animación rechazada: {e}");
+                }
+            },
+            Msg::Alternar => {
+                if self.anim.is_none() {
+                    self.mensaje = "no hay animación cargada".to_string();
+                    return Task::none();
+                }
+                self.reproduciendo = !self.reproduciendo;
+                self.ultimo_cuadro = None;
+                // al pausar se redibuja al ancho de detalle; al reanudar, al de animación
+                return self.redibujar();
+            }
+            Msg::Detener => {
+                self.reproduciendo = false;
+                self.t = 0.0;
+                self.ultimo_cuadro = None;
+                if let Some(vista) = &self.modelo {
+                    self.valores = vista.valores_iniciales();
+                }
+                if let Some(anim) = &self.anim {
+                    anim.aplicar(0.0, &mut self.valores);
+                }
+                return self.redibujar();
+            }
+            Msg::Cuadro(ahora) => {
+                if !self.reproduciendo {
+                    return Task::none();
+                }
+                self.avanzar(ahora);
+                return self.redibujar();
+            }
+            Msg::CerrarError => self.error = None,
         }
         Task::none()
     }
 
     fn vista(&self) -> Element<'_, Msg> {
         if let Some(error) = &self.error {
-            return container(text(error.clone()).size(15))
-                .padding(24)
-                .center(Length::Fill)
-                .into();
+            let mut col = column![text(error.clone()).size(15)].spacing(12);
+            if self.modelo.is_none() {
+                col = col.push(button(text("Abrir modelo…")).on_press(Msg::AbrirModelo));
+            }
+            if let Some(m) = self.modelo.clone() {
+                // el modelo sigue vivo: se puede recuperar la vista sin reiniciar
+                col = col.push(
+                    button(text(format!("volver a {}", m.nombre))).on_press(Msg::CerrarError),
+                );
+            }
+            return container(col).padding(24).center(Length::Fill).into();
         }
 
         let panel = self.panel();
@@ -173,7 +381,9 @@ impl Visor {
         let pie = self.pie();
 
         let cuerpo = row![
-            container(panel).width(Length::Fixed(ANCHO_PANEL)).height(Length::Fill),
+            container(panel)
+                .width(Length::Fixed(ANCHO_PANEL))
+                .height(Length::Fill),
             container(lienzo).width(Length::Fill).height(Length::Fill),
         ];
 
@@ -184,7 +394,7 @@ impl Visor {
             .into()
     }
 
-    /// Panel izquierdo: **capas** (partes) arriba y **parámetros** debajo.
+    /// Panel izquierdo: archivos, animación, **capas** y **parámetros**.
     fn panel(&self) -> Element<'_, Msg> {
         let mut capas = column![].spacing(2);
         for (i, nombre) in self
@@ -204,18 +414,67 @@ impl Visor {
             );
         }
 
+        let estado_anim = match (&self.anim, self.modelo.is_some()) {
+            (Some(a), _) => format!(
+                "{} · {:.1}/{:.1} s{}",
+                a.nombre,
+                self.t,
+                a.duracion,
+                if self.reproduciendo {
+                    " · ▶"
+                } else {
+                    " · ⏸"
+                }
+            ),
+            (None, true) => "sin animación".to_string(),
+            (None, false) => "sin modelo".to_string(),
+        };
+
         let mut cuerpo = column![
+            button(text("Abrir modelo…"))
+                .on_press(Msg::AbrirModelo)
+                .width(Length::Fill),
+            button(text("Abrir animación…"))
+                .on_press(Msg::AbrirAnimacion)
+                .width(Length::Fill),
+            text(estado_anim).size(11),
+            row![
+                button(text(if self.reproduciendo {
+                    "Pausar"
+                } else {
+                    "Reproducir"
+                }))
+                .on_press(Msg::Alternar)
+                .width(Length::Fill),
+                button(text("Detener"))
+                    .on_press(Msg::Detener)
+                    .width(Length::Fill),
+            ]
+            .spacing(4),
+            Space::new().height(6),
             text("Capas").size(13),
             Space::new().height(4),
-            scrollable(capas).height(Length::Fixed(170.0)),
+            scrollable(capas).height(Length::Fixed(140.0)),
             Space::new().height(8),
         ];
         cuerpo = cuerpo.push(self.lista_parametros());
         cuerpo
             .push(Space::new().height(8))
-            .push(button(text("Volver a reposo")).on_press(Msg::Reposo).width(Length::Fill))
-            .push(button(text("Guardar PNG")).on_press(Msg::Guardar).width(Length::Fill))
-            .push(button(text("Cambiar tema")).on_press(Msg::Tema).width(Length::Fill))
+            .push(
+                button(text("Volver a reposo"))
+                    .on_press(Msg::Reposo)
+                    .width(Length::Fill),
+            )
+            .push(
+                button(text("Guardar PNG"))
+                    .on_press(Msg::Guardar)
+                    .width(Length::Fill),
+            )
+            .push(
+                button(text("Cambiar tema"))
+                    .on_press(Msg::Tema)
+                    .width(Length::Fill),
+            )
             .into()
     }
 
@@ -236,7 +495,9 @@ impl Visor {
                 column![
                     row![
                         text(nombre).size(12).width(Length::Fixed(130.0)),
-                        text(format!("{valor:+.2}")).size(12).width(Length::Fixed(52.0)),
+                        text(format!("{valor:+.2}"))
+                            .size(12)
+                            .width(Length::Fixed(52.0)),
                     ],
                     slider(rango, valor, move |v| Msg::Param(i, v)).step(0.01_f32),
                 ]
@@ -256,12 +517,10 @@ impl Visor {
 
     fn lienzo(&self) -> Element<'_, Msg> {
         match &self.imagen {
-            Some(h) => container(
-                image(h.clone()).content_fit(iced::ContentFit::Contain),
-            )
-            .padding(12)
-            .center(Length::Fill)
-            .into(),
+            Some(h) => container(image(h.clone()).content_fit(iced::ContentFit::Contain))
+                .padding(12)
+                .center(Length::Fill)
+                .into(),
             None => container(text("dibujando…")).center(Length::Fill).into(),
         }
     }
@@ -290,5 +549,45 @@ impl Visor {
             ),
             None => "sin modelo".to_string(),
         }
+    }
+}
+
+// ---------------------------------------------------------------- archivos
+
+/// Carga un modelo por la ruta que llega en la línea de comandos.
+fn visor_cargar(ruta: String) -> Task<Msg> {
+    Task::perform(
+        async move {
+            view::Vista::cargar(&ruta)
+                .map(Arc::new)
+                .map_err(|e| format!("no pude abrir «{ruta}»: {e}"))
+        },
+        Msg::ModeloCargado,
+    )
+}
+
+/// Abre el selector nativo con `zenity` y devuelve la ruta elegida (`None` si se cancela).
+///
+/// Se ejecuta en una tarea aparte: el diálogo bloquea hasta que el usuario responde.
+async fn elegir_archivo(
+    titulo: &'static str,
+    etiqueta: &'static str,
+    patron: &'static str,
+) -> Option<String> {
+    let salida = std::process::Command::new("zenity")
+        .arg("--file-selection")
+        .arg(format!("--title={titulo}"))
+        .arg(format!("--file-filter={etiqueta} | {patron}"))
+        .arg("--file-filter=Todos | *")
+        .output()
+        .ok()?;
+    if !salida.status.success() {
+        return None; // el usuario canceló
+    }
+    let ruta = String::from_utf8_lossy(&salida.stdout).trim().to_string();
+    if ruta.is_empty() {
+        None
+    } else {
+        Some(ruta)
     }
 }

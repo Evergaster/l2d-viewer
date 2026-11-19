@@ -22,7 +22,9 @@ y del *comportamiento*, no del código.
 | Cargar lo exportado y borrar claves (ida y vuelta de `l2d-anim/1`) | ✅ verificado en navegador |
 | Guardar el modelo editado (`l2d-model/1`) y reabrirlo | ✅ verificado en navegador (`docs/14`) |
 | Validar un `.l2d` desde Rust (`l2d edit`) | ✅ |
-| **Visor con interfaz** sobre el motor propio (`l2d-ui`) | ✅ ventana con deslizadores, sin Core (`docs/17`) |
+| **Visor con interfaz** sobre el motor propio (`l2d-ui`) | ✅ ventana con deslizadores y capas, sin Core (`docs/17`) |
+| Abrir modelos y animaciones desde la ventana | ✅ selector `zenity` (`docs/18`) |
+| **Reproducir `l2d-anim/1`** con el motor propio | ✅ bucle a 15 cuadros/s, con banco de ms medido (`docs/18`) |
 | `draw_order_group`, ventana nativa | ⬜ |
 
 > Estado real: lector de formato sólido, renderizador de geometría correcto y un **editor usable**
@@ -61,6 +63,7 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 15. `docs/15-motor-en-rust.md` — el evaluador propio en Rust y cuánto acertaba antes (12/134).
 16. `docs/16-motor-cerrado.md` — **el motor cerrado**: composición + selección con pesos, 134/134.
 17. `docs/17-interfaz.md` — el visor con interfaz (`l2d-ui`) y los tres defectos que salieron al dibujar.
+18. `docs/18-animacion.md` — abrir archivos y **reproducir `l2d-anim/1`**, con el rendimiento medido y el halo del borde descartado como defecto.
 - `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
@@ -215,9 +218,18 @@ eslabón y el bbox tras cada paso.
 tools/visor.sh                     # Hiyori; tools/visor.sh ruta/modelo.moc3 para otro
 ```
 
-Ventana con un deslizador por parámetro, «Volver a reposo», «Guardar PNG» y tema claro/oscuro.
+Ventana con un deslizador por parámetro, una casilla por capa, «Volver a reposo», «Guardar PNG» y
+tema claro/oscuro. **«Abrir modelo…» y «Abrir animación…»** usan el selector del sistema (`zenity`),
+y la animación se reproduce en bucle con «Pausar»/«Detener».
+
+```bash
+./target/release/l2d-ui <modelo.moc3> <anim.json>   # abre y reproduce al arrancar
+L2D_UI_LOG=1 tools/visor.sh                          # ms de dibujo cada 24 cuadros
+cargo run --release -p view --example banco -- <modelo.moc3>   # ms por pose a cada ancho
+```
+
 Dibuja el motor propio en CPU (`crates/pose` + `crates/raster`), así que **no carga el Core** y no
-depende del EGL de la tarjeta. Detalle y pendientes: `docs/17-interfaz.md`.
+depende del EGL de la tarjeta. Detalle y pendientes: `docs/17-interfaz.md` y `docs/18-animacion.md`.
 
 ## Ramas
 
