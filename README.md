@@ -25,6 +25,7 @@ y del *comportamiento*, no del código.
 | **Visor con interfaz** sobre el motor propio (`l2d-ui`) | ✅ ventana con deslizadores y capas, sin Core (`docs/17`) |
 | Abrir modelos y animaciones desde la ventana | ✅ selector `zenity` (`docs/18`) |
 | **Reproducir `l2d-anim/1`** con el motor propio | ✅ bucle a 15 cuadros/s, con banco de ms medido (`docs/18`) |
+| **Zoom y centro de cámara** (rueda, flechas, `--zoom/--centro`) | ✅ 1:1 idéntico al dibujo sin encuadre (`docs/19`) |
 | `draw_order_group`, ventana nativa | ⬜ |
 
 > Estado real: lector de formato sólido, renderizador de geometría correcto y un **editor usable**
@@ -64,6 +65,7 @@ tools/editor.sh                         # editor (Hiyori); tools/editor.sh Wanko
 16. `docs/16-motor-cerrado.md` — **el motor cerrado**: composición + selección con pesos, 134/134.
 17. `docs/17-interfaz.md` — el visor con interfaz (`l2d-ui`) y los tres defectos que salieron al dibujar.
 18. `docs/18-animacion.md` — abrir archivos y **reproducir `l2d-anim/1`**, con el rendimiento medido y el halo del borde descartado como defecto.
+19. `docs/19-encuadre.md` — **zoom y centro de cámara**, con el eje que costó una vuelta.
 - `spec/01-formato-animacion.md` y `spec/02-formato-modelo.md` — los dos formatos propios.
 
 ## La regla
@@ -226,7 +228,12 @@ y la animación se reproduce en bucle con «Pausar»/«Detener».
 ./target/release/l2d-ui <modelo.moc3> <anim.json>   # abre y reproduce al arrancar
 L2D_UI_LOG=1 tools/visor.sh                          # ms de dibujo cada 24 cuadros
 cargo run --release -p view --example banco -- <modelo.moc3>   # ms por pose a cada ancho
+l2d ver <modelo.moc3> /tmp/cara.png --zoom 4 --centro 1488,700  # primer plano del rostro
+l2d-ui <modelo.moc3> --zoom 4 --centro 1488,700                # la ventana, ya en la cara
 ```
+
+Para mirar de cerca: **rueda** acerca, **flechas** mueven, **0** vuelve al modelo entero (o los
+botones `+` `−` `Todo`). `--centro` va en píxeles de imagen (origen arriba-izquierda).
 
 Dibuja el motor propio en CPU (`crates/pose` + `crates/raster`), así que **no carga el Core** y no
 depende del EGL de la tarjeta. Detalle y pendientes: `docs/17-interfaz.md` y `docs/18-animacion.md`.

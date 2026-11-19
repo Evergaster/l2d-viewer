@@ -99,7 +99,7 @@ fn usage() -> String {
 fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let Some(ruta) = args.first() else {
         return Err(
-            "uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--param Nombre=valor]".into(),
+            "uso: l2d ver <modelo.moc3> <salida.png> [--ancho N] [--zoom N] [--centro X,Y] [--param Nombre=valor] [--ocultar Capa]".into(),
         );
     };
     let Some(salida) = args.get(1) else {
@@ -108,6 +108,8 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut ancho = 700u32;
     let mut valores: Vec<(String, f32)> = Vec::new();
     let mut ocultar: Vec<String> = Vec::new();
+    let mut zoom: f32 = 1.0;
+    let mut centro: Option<(f32, f32)> = None;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -130,6 +132,19 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
                 if let Some(capa) = args.get(i + 1) {
                     ocultar.push(capa.clone());
                 }
+                i += 2;
+            }
+            "--zoom" => {
+                zoom = args
+                    .get(i + 1)
+                    .ok_or("--zoom necesita un número")?
+                    .parse()?;
+                i += 2;
+            }
+            "--centro" => {
+                let par = args.get(i + 1).ok_or("--centro espera X,Y")?;
+                let (x, y) = par.split_once(',').ok_or("--centro espera X,Y")?;
+                centro = Some((x.trim().parse()?, y.trim().parse()?));
                 i += 2;
             }
             otro => return Err(format!("opción desconocida: {otro}").into()),
@@ -157,7 +172,13 @@ fn ver_cmd(args: &[String]) -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| format!("capa «{capa}» no existe en el modelo"))?;
         ocultas[p] = true;
     }
-    let canvas = vista.render(&v, ancho, &ocultas);
+    // Encuadre: zoom y centro en píxeles del lienzo del modelo. Sin `--centro` se queda el centro
+    // del lienzo, que es lo mismo que dibujaba `render` antes de existir el encuadre.
+    let mut encuadre = view::Encuadre::entero(&vista).con_zoom(zoom);
+    if let Some((x, y)) = centro {
+        encuadre = encuadre.centrado_en(&vista, x, y);
+    }
+    let canvas = vista.render_encuadre(&v, ancho, &ocultas, encuadre);
     let t2 = std::time::Instant::now();
     canvas.save_png(salida)?;
 

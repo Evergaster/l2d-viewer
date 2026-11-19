@@ -28,7 +28,48 @@ pub struct Parametro {
     pub defecto: f32,
 }
 
+/// Encuadre del dibujo: qué parte del lienzo del modelo ocupa la ventana.
+///
+/// Existe porque a 560 px el detalle fino (pestañas, dedos, bordes del pelo) no se juzga. El zoom
+/// se aplica al pasar de unidades a píxeles, así que no toca la geometría ni el orden de dibujo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Encuadre {
+    /// 1.0 = el modelo entero dentro del ancho pedido. 2.0 = la mitad central, al doble.
+    pub zoom: f32,
+    /// Punto que queda en el centro, en el eje del **modelo**: `x` desde la izquierda, `y` hacia
+    /// **arriba** (es el eje en el que trabaja `to_screen`). Para dar coordenadas de imagen
+    /// (arriba-izquierda, como se leen) usar [`Encuadre::centrado_en`], que invierte la `y`.
+    pub centro: [f32; 2],
+}
+
+impl Encuadre {
+    /// El modelo entero: exactamente lo que dibujaba `render` antes de existir el encuadre.
+    pub fn entero(vista: &Vista) -> Self {
+        Self {
+            zoom: 1.0,
+            centro: [vista.lienzo.0 / 2.0, vista.lienzo.1 / 2.0],
+        }
+    }
+
+    /// Ajusta el zoom con un tope sano (más de 16× sólo amplía téxeles).
+    pub fn con_zoom(mut self, zoom: f32) -> Self {
+        if zoom.is_finite() {
+            self.zoom = zoom.clamp(0.05, 16.0);
+        }
+        self
+    }
+
+    /// Centra en un punto del lienzo con coordenadas de **imagen** (origen arriba-izquierda), que
+    /// es como se leen en un editor o en un PNG. Recorta a los bordes del lienzo.
+    pub fn centrado_en(mut self, vista: &Vista, x: f32, y: f32) -> Self {
+        let (cw, ch) = vista.lienzo;
+        self.centro = [x.clamp(0.0, cw), (ch - y).clamp(0.0, ch)];
+        self
+    }
+}
+
 /// Modelo listo para dibujar.
+
 pub struct Vista {
     pub modelo: Modelo,
     pub bnd: Bindings,
@@ -172,10 +213,36 @@ impl Vista {
     /// `ocultas` es una casilla por parte (`true` = capa oculta). Si va vacía se usa
     /// [`Vista::ocultas_por_defecto`].
     pub fn render(&self, valores: &[f32], ancho_px: u32, ocultas: &[bool]) -> raster::Canvas {
+        self.render_encuadre(valores, ancho_px, ocultas, Encuadre::entero(self))
+    }
+
+    /// Igual que [`Vista::render`], pero moviendo la cámara: `zoom` y el punto del lienzo del
+    /// modelo que queda en el centro.
+    ///
+    /// Con [`Encuadre::entero`] el resultado es **idéntico** a `render` (hay prueba de igualdad
+    /// de píxeles): el encuadre generaliza el dibujo, no lo sustituye.
+    pub fn render_encuadre(
+        &self,
+        valores: &[f32],
+        ancho_px: u32,
+        ocultas: &[bool],
+        encuadre: Encuadre,
+    ) -> raster::Canvas {
         let (cw, ch) = self.lienzo;
-        let k = if cw > 0.0 { ancho_px as f32 / cw } else { 1.0 };
-        let alto = (ch * k).round().max(1.0) as u32;
+        let zoom = if encuadre.zoom.is_finite() && encuadre.zoom > 0.0 {
+            encuadre.zoom
+        } else {
+            1.0
+        };
+        let k = if cw > 0.0 {
+            ancho_px as f32 / cw * zoom
+        } else {
+            1.0
+        };
+        let alto = (ch * (ancho_px as f32 / cw.max(1.0))).round().max(1.0) as u32;
         let ancho = ancho_px.max(1);
+        let centro = encuadre.centro;
+        let (mitad_x, mitad_y) = (ancho as f32 / 2.0, alto as f32 / 2.0);
 
         let sel = Seleccion::con_valores(&self.modelo, &self.bnd, valores);
         let comp = pose::componer(&self.modelo, &sel);
@@ -183,11 +250,15 @@ impl Vista {
         // Convención verificada mirando el render (docs/17 §3): la `y` del Core va al revés
         // respecto del lienzo del archivo, y la `v` del atlas se muestrea **tal cual**. Las dos
         // van en pareja: invertir una sola deja el personaje boca abajo o despiezado.
-        let alto_total = ch * k;
+        //
+        // El encuadre se aplica aquí, en el único sitio donde se pasa de unidades a píxeles, así
+        // que el zoom no toca geometría, máscaras ni orden de dibujo: sólo la escala y el origen.
         let to_screen = move |p: [f32; 2]| -> [f32; 2] {
+            let x = self.origen[0] + p[0] * self.ppu;
+            let y = self.origen[1] + p[1] * self.ppu;
             [
-                (self.origen[0] + p[0] * self.ppu) * k,
-                alto_total - (self.origen[1] + p[1] * self.ppu) * k,
+                x * k + mitad_x - centro[0] * k,
+                mitad_y + centro[1] * k - y * k,
             ]
         };
 

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use iced::widget::{
     button, checkbox, column, container, image, row, scrollable, slider, text, Space,
 };
-use iced::{Alignment, Element, Length, Subscription, Task};
+use iced::{event, keyboard, mouse, Alignment, Element, Length, Subscription, Task};
 
 /// Ancho al que se dibuja el modelo para la ventana (el PNG se guarda al doble).
 const ANCHO_DIBUJO: u32 = 560;
@@ -39,12 +39,52 @@ const ANCHO_PANEL: f32 = 300.0;
 /// un núcleo libre; con 24 el visor se comía ~75 % de uno.
 const CUADRO_MS: u64 = 66;
 
+/// Argumentos: `[modelo.moc3] [anim.json] [--zoom N] [--centro X,Y]`, en cualquier orden.
+///
+/// `--centro` va en píxeles del lienzo del modelo con origen arriba-izquierda (como se lee en el
+/// PNG), así que `--zoom 4 --centro 1488,700` abre el visor en la cara.
+fn argumentos() -> (
+    Option<String>,
+    Option<String>,
+    Option<f32>,
+    Option<(f32, f32)>,
+) {
+    let mut ruta = None;
+    let mut anim = None;
+    let mut zoom = None;
+    let mut centro = None;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--zoom" => {
+                zoom = args.get(i + 1).and_then(|s| s.parse::<f32>().ok());
+                i += 2;
+            }
+            "--centro" => {
+                centro = args.get(i + 1).and_then(|s| {
+                    let (x, y) = s.split_once(',')?;
+                    Some((x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?))
+                });
+                i += 2;
+            }
+            otro => {
+                if ruta.is_none() {
+                    ruta = Some(otro.to_string());
+                } else if anim.is_none() {
+                    anim = Some(otro.to_string());
+                }
+                i += 1;
+            }
+        }
+    }
+    (ruta, anim, zoom, centro)
+}
+
 fn main() -> iced::Result {
-    let mut args = std::env::args().skip(1);
-    let ruta = args.next();
-    let anim = args.next();
+    let (ruta, anim, zoom, centro) = argumentos();
     iced::application(
-        move || Visor::nuevo(ruta.clone(), anim.clone()),
+        move || Visor::nuevo(ruta.clone(), anim.clone(), zoom, centro),
         Visor::actualizar,
         Visor::vista,
     )
@@ -86,6 +126,11 @@ struct Visor {
     /// Diagnóstico: cuadros y milisegundos acumulados de dibujo (con `L2D_UI_LOG=1`).
     cuadros: u32,
     ms_acumulados: f64,
+    /// Cámara: 1.0 = modelo entero. El centro va en el eje del modelo (y hacia arriba).
+    zoom: f32,
+    centro: [f32; 2],
+    /// Centro pedido por línea de comandos, para aplicarlo en cuanto haya modelo.
+    centro_inicial: Option<(f32, f32)>,
 }
 
 #[derive(Clone)]
@@ -106,10 +151,18 @@ enum Msg {
     Detener,
     Cuadro(Instant),
     CerrarError,
+    Zoom(f32),
+    Pan(f32, f32),
+    Todo,
 }
 
 impl Visor {
-    fn nuevo(ruta: Option<String>, anim: Option<String>) -> (Self, Task<Msg>) {
+    fn nuevo(
+        ruta: Option<String>,
+        anim: Option<String>,
+        zoom: Option<f32>,
+        centro: Option<(f32, f32)>,
+    ) -> (Self, Task<Msg>) {
         let v = Self {
             modelo: None,
             valores: Vec::new(),
@@ -126,6 +179,9 @@ impl Visor {
             anim_pendiente: anim,
             cuadros: 0,
             ms_acumulados: 0.0,
+            zoom: zoom.unwrap_or(1.0),
+            centro: [0.0, 0.0],
+            centro_inicial: centro,
         };
         match ruta {
             Some(r) => (v, visor_cargar(r)),
@@ -145,6 +201,17 @@ impl Visor {
                     vista.body.art_meshes.len(),
                     vista.texturas.len()
                 );
+                let lienzo = vista.lienzo;
+                self.centro = [lienzo.0 / 2.0, lienzo.1 / 2.0];
+                if let Some((x, y)) = self.centro_inicial.take() {
+                    // `centrado_en` recibe coordenadas de imagen y las pasa al eje del modelo
+                    let e = view::Encuadre {
+                        zoom: self.zoom,
+                        centro: self.centro,
+                    }
+                    .centrado_en(&vista, x, y);
+                    self.centro = e.centro;
+                }
                 self.modelo = Some(vista);
                 self.anim = None;
                 self.reproduciendo = false;
@@ -168,6 +235,20 @@ impl Visor {
                         }
                         Err(e) => self.mensaje = format!("animación rechazada: {e}"),
                     }
+                }
+                if std::env::var_os("L2D_UI_LOG").is_some() {
+                    eprintln!(
+                        "l2d-ui: modelo {} · lienzo {:.0}×{:.0} · zoom {:.2}× · centro ({:.0},{:.0})",
+                        self.modelo
+                            .as_ref()
+                            .map(|v| v.nombre.clone())
+                            .unwrap_or_default(),
+                        self.modelo.as_ref().map(|v| v.lienzo.0).unwrap_or(0.0),
+                        self.modelo.as_ref().map(|v| v.lienzo.1).unwrap_or(0.0),
+                        self.zoom,
+                        self.centro[0],
+                        self.centro[1]
+                    );
                 }
                 self.redibujar()
             }
@@ -193,18 +274,25 @@ impl Visor {
         } else {
             ANCHO_DIBUJO
         };
+        let encuadre = view::Encuadre {
+            zoom: self.zoom,
+            centro: self.centro,
+        };
         let t0 = Instant::now();
-        let canvas = vista.render(&valores, ancho, &ocultas);
+        let canvas = vista.render_encuadre(&valores, ancho, &ocultas, encuadre);
         let ms = t0.elapsed().as_millis();
 
         self.cuadros += 1;
         self.ms_acumulados += t0.elapsed().as_secs_f64() * 1000.0;
         if self.cuadros % 24 == 0 && std::env::var_os("L2D_UI_LOG").is_some() {
             eprintln!(
-                "l2d-ui: {} cuadros · dibujo medio {:.1} ms · {} px",
+                "l2d-ui: {} cuadros · dibujo medio {:.1} ms · {} px · zoom {:.2}× centro ({:.0},{:.0})",
                 self.cuadros,
                 self.ms_acumulados / 24.0,
-                ancho
+                ancho,
+                self.zoom,
+                self.centro[0],
+                self.centro[1]
             );
             self.ms_acumulados = 0.0;
         }
@@ -214,13 +302,67 @@ impl Visor {
     }
 
     fn suscripcion(&self) -> Subscription<Msg> {
+        // Rueda del ratón para acercar, flechas para moverse, 0 para volver al modelo entero.
+        // Se ignoran los eventos que algún widget ya consumió (`Status::Ignored`), así pasar la
+        // rueda sobre la lista de parámetros no mueve la cámara.
+        let camara = event::listen_with(|ev, estado, _id| {
+            if estado != event::Status::Ignored {
+                return None;
+            }
+            match ev {
+                event::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                    let d = match delta {
+                        mouse::ScrollDelta::Lines { y, .. } => y,
+                        mouse::ScrollDelta::Pixels { y, .. } => y / 50.0,
+                    };
+                    if d.abs() < 0.01 {
+                        None
+                    } else if d > 0.0 {
+                        Some(Msg::Zoom(1.15))
+                    } else {
+                        Some(Msg::Zoom(1.0 / 1.15))
+                    }
+                }
+                event::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                    let paso = 0.08;
+                    match key.as_ref() {
+                        keyboard::Key::Character("+") | keyboard::Key::Character("=") => {
+                            Some(Msg::Zoom(1.25))
+                        }
+                        keyboard::Key::Character("-") | keyboard::Key::Character("_") => {
+                            Some(Msg::Zoom(0.8))
+                        }
+                        keyboard::Key::Character("0") => Some(Msg::Todo),
+                        keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
+                            Some(Msg::Pan(-paso, 0.0))
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                            Some(Msg::Pan(paso, 0.0))
+                        }
+                        // el eje del modelo apunta hacia arriba: subir la cámara es +y
+                        keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                            Some(Msg::Pan(0.0, paso))
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                            Some(Msg::Pan(0.0, -paso))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        });
+
         if self.reproduciendo {
             // `every` entrega el instante del disparo: el delta real sale de ahí, no de suponer
             // que cada tick llegó a tiempo (con el CPU ocupado llegan tarde y la animación se
             // arrastraría).
-            iced::time::every(Duration::from_millis(CUADRO_MS)).map(Msg::Cuadro)
+            Subscription::batch([
+                iced::time::every(Duration::from_millis(CUADRO_MS)).map(Msg::Cuadro),
+                camara,
+            ])
         } else {
-            Subscription::none()
+            camara
         }
     }
 
@@ -269,7 +411,11 @@ impl Visor {
                 let Some(vista) = &self.modelo else {
                     return Task::none();
                 };
-                let canvas = vista.render(&self.valores, 1400, &self.ocultas);
+                let encuadre = view::Encuadre {
+                    zoom: self.zoom,
+                    centro: self.centro,
+                };
+                let canvas = vista.render_encuadre(&self.valores, 1400, &self.ocultas, encuadre);
                 let ruta = format!("{}.png", vista.nombre);
                 match canvas.save_png(&ruta) {
                     Ok(()) => self.mensaje = format!("guardado {ruta}"),
@@ -357,6 +503,25 @@ impl Visor {
                 return self.redibujar();
             }
             Msg::CerrarError => self.error = None,
+            Msg::Zoom(factor) => {
+                self.zoom = (self.zoom * factor).clamp(0.5, 12.0);
+                return self.redibujar();
+            }
+            Msg::Pan(fx, fy) => {
+                if let Some(v) = &self.modelo {
+                    let (cw, ch) = v.lienzo;
+                    self.centro[0] = (self.centro[0] + fx * cw).clamp(0.0, cw);
+                    self.centro[1] = (self.centro[1] + fy * ch).clamp(0.0, ch);
+                }
+                return self.redibujar();
+            }
+            Msg::Todo => {
+                if let Some(v) = &self.modelo {
+                    self.centro = [v.lienzo.0 / 2.0, v.lienzo.1 / 2.0];
+                }
+                self.zoom = 1.0;
+                return self.redibujar();
+            }
         }
         Task::none()
     }
@@ -458,6 +623,18 @@ impl Visor {
             Space::new().height(8),
         ];
         cuerpo = cuerpo.push(self.lista_parametros());
+        cuerpo = cuerpo.push(Space::new().height(6)).push(
+            row![
+                button(text("+"))
+                    .on_press(Msg::Zoom(1.25))
+                    .width(Length::Fill),
+                button(text("−"))
+                    .on_press(Msg::Zoom(0.8))
+                    .width(Length::Fill),
+                button(text("Todo")).on_press(Msg::Todo).width(Length::Fill),
+            ]
+            .spacing(4),
+        );
         cuerpo
             .push(Space::new().height(8))
             .push(
@@ -526,10 +703,20 @@ impl Visor {
     }
 
     fn pie(&self) -> Element<'_, Msg> {
+        let camara = format!(
+            "zoom {:.2}× · rueda/+/- · flechas mueven · 0 todo",
+            self.zoom
+        );
         let estado = if self.mensaje.is_empty() {
-            format!("{} · dibujo {} ms", self.info(), self.ms)
+            format!("{} · {} · dibujo {} ms", self.info(), camara, self.ms)
         } else {
-            format!("{} · {} · dibujo {} ms", self.info(), self.mensaje, self.ms)
+            format!(
+                "{} · {} · {} · dibujo {} ms",
+                self.info(),
+                self.mensaje,
+                camara,
+                self.ms
+            )
         };
         container(text(estado).size(11))
             .padding([6, 12])
